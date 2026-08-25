@@ -14,6 +14,8 @@ Build a full-stack, responsive web application for Centralized Multi-MikroTik Ma
 - Built NetPulse RouterOS-inspired dark monitoring workspace with responsive sidebar navigation.
 - Added fleet metrics, aggregate traffic chart, alarm center, router table, search, group filters, status badges, and mobile navigation.
 - Added router detail drawer with Interfaces, Resources, and Logs tabs plus connection/console action feedback.
+- Added read-only RouterOS drawer tabs (Logs, PPP Profiles, PPP Secrets, System Time) with loading/error states, safe demo-router config messaging, and PPP secret password redaction with a reveal toggle.
+- Extended backend `RESOURCE_PATHS` allow-list with `ppp-profiles`, `ppp-secrets`, `system-clock`; added `?reveal=true` query param plus a `sanitize_error()` helper that scrubs host/username from 502 messages.
 - Added `/api/monitoring/overview` and `/api/health` endpoints with MongoDB-safe health handling.
 - Added Ubuntu 24.04 setup notes and integration boundaries in the root README.
 - Added a fixed-operation RouterOS API adapter boundary for native reads and writes, credential encryption requirements, backup history/schedule endpoints, direct API action panel, and Backup Now workflow feedback.

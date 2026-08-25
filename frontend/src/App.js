@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   Activity, AlertTriangle, Bell, ChevronDown, ChevronRight, CircleGauge,
-  Cpu, Database, Ellipsis, LayoutDashboard, Menu, Network, Plus,
-  RefreshCw, Router, Search, Settings2, ShieldCheck, SlidersHorizontal,
-  Terminal, Users, Wifi, X
+  Clock, Cpu, Database, Ellipsis, Eye, EyeOff, KeyRound, LayoutDashboard,
+  Loader2, Menu, Network, Plus, RefreshCw, Router, Search, Settings2,
+  ShieldCheck, SlidersHorizontal, Terminal, Users, Wifi, X
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "@/App.css";
@@ -27,6 +27,29 @@ const nav = [
   { label: "Audit log", icon: ShieldCheck },
 ];
 
+const DRAWER_TABS = [
+  { key: "Interfaces", icon: Wifi, testid: "router-tab-interfaces", short: "Interfaces" },
+  { key: "Resources", icon: Cpu, testid: "router-tab-resources", short: "Resources" },
+  { key: "Logs", icon: Terminal, testid: "router-tab-logs", short: "Logs" },
+  { key: "PPP Profiles", icon: Users, testid: "router-tab-ppp-profiles", short: "Profiles" },
+  { key: "PPP Secrets", icon: KeyRound, testid: "router-tab-ppp-secrets", short: "Secrets" },
+  { key: "System Time", icon: Clock, testid: "router-tab-system-time", short: "Clock" },
+];
+
+const RESOURCE_COLUMNS = {
+  Logs: ["time", "topics", "message"],
+  "PPP Profiles": ["name", "local-address", "remote-address", "rate-limit", "dns-server"],
+  "PPP Secrets": ["name", "service", "profile", "password", "remote-address", "disabled"],
+  "System Time": ["time", "date", "time-zone-name", "gmt-offset", "dst-active"],
+};
+
+const RESOURCE_KEY = {
+  Logs: "logs",
+  "PPP Profiles": "ppp-profiles",
+  "PPP Secrets": "ppp-secrets",
+  "System Time": "system-clock",
+};
+
 function Status({ value }) {
   const map = { online: ["Online", "status-online"], warning: ["Warning", "status-warning"], offline: ["Offline", "status-offline"] };
   const [label, cls] = map[value] || map.offline;
@@ -39,18 +62,88 @@ function Metric({ icon: Icon, label, value, detail, tone = "cyan" }) {
   </div>;
 }
 
+function ResourceTable({ tab, routerId, revealSecret, onRevealToggle }) {
+  const resourceKey = RESOURCE_KEY[tab];
+  const columns = RESOURCE_COLUMNS[tab] || [];
+  const [state, setState] = useState({ loading: true, error: "", items: [] });
+
+  useEffect(() => {
+    if (!resourceKey || !routerId) return;
+    let cancelled = false;
+    setState({ loading: true, error: "", items: [] });
+    const params = resourceKey === "ppp-secrets" && revealSecret ? "?reveal=true" : "";
+    axios.get(`${API}/routers/${routerId}/resources/${resourceKey}${params}`)
+      .then(r => { if (!cancelled) setState({ loading: false, error: "", items: r.data?.items || [] }); })
+      .catch(err => {
+        if (cancelled) return;
+        const status = err.response?.status;
+        const detail = err.response?.data?.detail;
+        const message = status === 404
+          ? "This is a demo router. Configure a managed router with live RouterOS credentials to see real data here."
+          : detail || "RouterOS API is unreachable. Verify the router credentials, port, and server allow-list.";
+        setState({ loading: false, error: message, items: [] });
+      });
+    return () => { cancelled = true; };
+  }, [resourceKey, routerId, revealSecret]);
+
+  if (state.loading) return <div className="res-loading" data-testid={`${resourceKey}-loading`}><Loader2 size={14} className="spin" />Loading {tab.toLowerCase()} from RouterOS API…</div>;
+  if (state.error) return <div className="res-error" data-testid={`${resourceKey}-error`}>{state.error}</div>;
+
+  if (tab === "System Time") {
+    const c = state.items?.[0] || {};
+    return <div className="clock-grid" data-testid="system-time-panel">
+      {columns.map(col => <div key={col}><span>{col.replaceAll("-", " ")}</span><b data-testid={`clock-${col}`}>{c[col] ?? "—"}</b></div>)}
+    </div>;
+  }
+
+  return <>
+    <div className="res-toolbar">
+      <b data-testid={`${resourceKey}-count`}>{state.items.length} {tab.toLowerCase()}</b>
+      {tab === "PPP Secrets" && <button className={`reveal-btn ${revealSecret ? "on" : ""}`} onClick={onRevealToggle} data-testid="ppp-secrets-reveal-toggle">
+        {revealSecret ? <><EyeOff size={13} />Hide passwords</> : <><Eye size={13} />Reveal passwords</>}
+      </button>}
+    </div>
+    <div className="res-table" data-testid={`${resourceKey}-table`}>
+      <table><thead><tr>{columns.map(c => <th key={c}>{c.replaceAll("-", " ").toUpperCase()}</th>)}</tr></thead>
+      <tbody>
+        {state.items.length === 0 && <tr><td colSpan={columns.length} className="res-empty">No entries returned by RouterOS.</td></tr>}
+        {state.items.map((row, i) => <tr key={row[".id"] || i} data-testid={`${resourceKey}-row-${i}`}>
+          {columns.map(c => <td key={c}>{row[c] ?? "—"}</td>)}
+        </tr>)}
+      </tbody></table>
+    </div>
+  </>;
+}
+
 function App() {
-  const [data, setData] = useState(fallback); const [active, setActive] = useState("Overview");
-  const [group, setGroup] = useState("All routers"); const [query, setQuery] = useState("");
-  const [drawer, setDrawer] = useState(false); const [notice, setNotice] = useState("");
-  const [selected, setSelected] = useState(null); const [drawerTab, setDrawerTab] = useState("Interfaces"); const [backupBusy, setBackupBusy] = useState(false);
+  const [data, setData] = useState(fallback);
+  const [active, setActive] = useState("Overview");
+  const [group, setGroup] = useState("All routers");
+  const [query, setQuery] = useState("");
+  const [drawer, setDrawer] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [drawerTab, setDrawerTab] = useState("Interfaces");
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [revealSecret, setRevealSecret] = useState(false);
+
   useEffect(() => { axios.get(`${API}/monitoring/overview`).then(r => r.data && setData(r.data)).catch(() => {}); }, []);
-  useEffect(() => { const button = document.querySelector('[data-testid="open-router-console"]'); if (button) button.lastChild.textContent = "Open native API console"; }, [selected, drawerTab]);
+  useEffect(() => { if (drawerTab !== "PPP Secrets") setRevealSecret(false); }, [drawerTab, selected]);
+
   const routers = useMemo(() => data.routers.filter(r => (group === "All routers" || r.group === group) && `${r.name} ${r.host}`.toLowerCase().includes(query.toLowerCase())), [data, group, query]);
   const online = data.routers.filter(r => r.status === "online").length;
   const show = (label) => { setActive(label); setNotice(`${label} view selected`); setTimeout(() => setNotice(""), 1800); };
-  const requestResource = async (resource, label) => { try { await axios.get(`${API}/routers/${selected?.id || data.routers[0].id}/resources/${resource}`); setNotice(`${label} loaded from RouterOS API`); } catch (error) { setNotice(error.response?.data?.detail || `${label} is unavailable until a managed router is configured`); } };
-  const queueBackup = async () => { setBackupBusy(true); try { const response = await axios.post(`${API}/routers/${selected?.id || data.routers[0].id}/backup-now`); setNotice(response.data?.message || "Backup queued"); } catch (error) { setNotice(error.response?.data?.detail || "Backup settings are required before running this"); } finally { setBackupBusy(false); } };
+  const requestResource = async (resource, label) => {
+    try { await axios.get(`${API}/routers/${selected?.id || data.routers[0].id}/resources/${resource}`); setNotice(`${label} loaded from RouterOS API`); }
+    catch (error) { setNotice(error.response?.data?.detail || `${label} is unavailable until a managed router is configured`); }
+  };
+  const queueBackup = async () => {
+    setBackupBusy(true);
+    try { const response = await axios.post(`${API}/routers/${selected?.id || data.routers[0].id}/backup-now`); setNotice(response.data?.message || "Backup queued"); }
+    catch (error) { setNotice(error.response?.data?.detail || "Backup settings are required before running this"); }
+    finally { setBackupBusy(false); }
+  };
+
   return <div className="app-shell">
     <aside className={`sidebar ${drawer ? "open" : ""}`} data-testid="main-sidebar">
       <div className="brand"><div className="brand-mark"><Network size={20} /></div><div><b>NETPULSE</b><span>mikrotik control plane</span></div><button className="icon-btn mobile-close" onClick={() => setDrawer(false)} data-testid="close-sidebar-button"><X size={17} /></button></div>
@@ -72,7 +165,19 @@ function App() {
         <div className="management-strip"><section className="panel management-panel"><div className="panel-head"><div><p className="eyebrow">NATIVE ROUTEROS API</p><h2>Direct configuration</h2></div><span className="api-lock"><ShieldCheck size={13} />Named actions only</span></div><div className="action-grid"><button onClick={() => requestResource("interfaces", "Interface list")} data-testid="api-interfaces-action"><Wifi size={15} />Interfaces</button><button onClick={() => requestResource("addresses", "IP address list")} data-testid="api-addresses-action"><Network size={15} />IP addresses</button><button onClick={() => requestResource("firewall", "Firewall filter list")} data-testid="api-firewall-action"><ShieldCheck size={15} />Firewall rules</button><button onClick={() => setNotice("Write actions require Operator or Admin confirmation")} data-testid="api-write-action"><Settings2 size={15} />Write protection</button></div></section><section className="panel management-panel"><div className="panel-head"><div><p className="eyebrow">BACKUP ENGINE</p><h2>Configuration backups</h2></div><button className="button primary compact" disabled={backupBusy} onClick={queueBackup} data-testid="backup-now-button"><Database size={14} />{backupBusy ? "Queueing..." : "Backup now"}</button></div><div className="backup-summary"><div><b>0</b><span>Stored snapshots</span></div><div><b>—</b><span>Last successful run</span></div><div><b>UTC</b><span>Schedule timezone</span></div></div><p className="backup-note" data-testid="backup-status-note">Creates encrypted <code>.backup</code> and sanitized <code>.rsc</code> files under the configured server backup path, then emails both attachments.</p></section></div>
       </section>
     </main>
-    {selected && <div className="drawer-backdrop" onClick={() => setSelected(null)}><aside className="router-drawer" onClick={e => e.stopPropagation()} data-testid="router-details-drawer"><div className="drawer-head"><div><p className="eyebrow">ROUTER DETAIL</p><h2>{selected.name}</h2><span className="muted mono">{selected.host}</span></div><button className="icon-btn" onClick={() => setSelected(null)} data-testid="close-router-details"><X size={18} /></button></div><Status value={selected.status} /><div className="drawer-stats"><div><span>CPU</span><b>{selected.cpu}%</b></div><div><span>Memory</span><b>{selected.memory}%</b></div><div><span>Uptime</span><b>{selected.uptime}</b></div></div><div className="tabs"><button className={drawerTab === "Interfaces" ? "active" : ""} onClick={() => setDrawerTab("Interfaces")} data-testid="router-tab-interfaces">Interfaces</button><button className={drawerTab === "Resources" ? "active" : ""} onClick={() => setDrawerTab("Resources")} data-testid="router-tab-resources">Resources</button><button className={drawerTab === "Logs" ? "active" : ""} onClick={() => setDrawerTab("Logs")} data-testid="router-tab-logs">Logs</button></div>{drawerTab === "Interfaces" && <div data-testid="router-interfaces-panel"><div className="interface-row"><span><Wifi size={15} />ether1 · uplink</span><Status value="online" /><b>842 Mbps</b></div><div className="interface-row"><span><Wifi size={15} />ether4 · office</span><Status value={selected.status === "warning" ? "warning" : "online"} /><b>318 Mbps</b></div></div>}{drawerTab === "Resources" && <div className="drawer-message" data-testid="router-resources-panel"><Cpu size={17} />Resource snapshot · CPU {selected.cpu}% · memory {selected.memory}%</div>}{drawerTab === "Logs" && <div className="drawer-message" data-testid="router-logs-panel"><Terminal size={17} />No new critical events · stream connected</div>}<button className="button secondary full" onClick={() => setNotice("Connection test started")} data-testid="test-router-connection"><RefreshCw size={15} />Test connection</button><button className="button primary full" onClick={() => setNotice("Configuration console opened")} data-testid="open-router-console"><Terminal size={15} />Open WebFig console</button></aside></div>}
+    {selected && <div className="drawer-backdrop" onClick={() => setSelected(null)}>
+      <aside className="router-drawer" onClick={e => e.stopPropagation()} data-testid="router-details-drawer">
+        <div className="drawer-head"><div><p className="eyebrow">ROUTER DETAIL</p><h2>{selected.name}</h2><span className="muted mono">{selected.host}</span></div><button className="icon-btn" onClick={() => setSelected(null)} data-testid="close-router-details"><X size={18} /></button></div>
+        <Status value={selected.status} />
+        <div className="drawer-stats"><div><span>CPU</span><b>{selected.cpu}%</b></div><div><span>Memory</span><b>{selected.memory}%</b></div><div><span>Uptime</span><b>{selected.uptime}</b></div></div>
+        <div className="tabs">{DRAWER_TABS.map(({ key, testid, short }) => <button key={key} className={drawerTab === key ? "active" : ""} onClick={() => setDrawerTab(key)} data-testid={testid}>{short}</button>)}</div>
+        {drawerTab === "Interfaces" && <div data-testid="router-interfaces-panel"><div className="interface-row"><span><Wifi size={15} />ether1 · uplink</span><Status value="online" /><b>842 Mbps</b></div><div className="interface-row"><span><Wifi size={15} />ether4 · office</span><Status value={selected.status === "warning" ? "warning" : "online"} /><b>318 Mbps</b></div></div>}
+        {drawerTab === "Resources" && <div className="drawer-message" data-testid="router-resources-panel"><Cpu size={17} />Resource snapshot · CPU {selected.cpu}% · memory {selected.memory}%</div>}
+        {["Logs", "PPP Profiles", "PPP Secrets", "System Time"].includes(drawerTab) && <ResourceTable key={`${selected.id}-${drawerTab}`} tab={drawerTab} routerId={selected.id} revealSecret={revealSecret} onRevealToggle={() => setRevealSecret(v => !v)} />}
+        <button className="button secondary full" onClick={() => setNotice("Connection test started")} data-testid="test-router-connection"><RefreshCw size={15} />Test connection</button>
+        <button className="button primary full" onClick={() => setNotice("Native API console opened")} data-testid="open-router-console"><Terminal size={15} />Open native API console</button>
+      </aside>
+    </div>}
   </div>;
 }
 export default App;

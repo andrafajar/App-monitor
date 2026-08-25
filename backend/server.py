@@ -1,4 +1,4 @@
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -24,7 +24,9 @@ DEMO = {"routers": [
     "groups": ["All routers", "Head Office", "Region East", "Operations", "Partner · PT ABC"],
     "traffic": [{"time":f"{i+8:02d}:00","inbound":v+12,"outbound":max(8,v-3)} for i,v in enumerate([0,28,21,44,36,58,45,66,52,73,62,81])]}
 
-RESOURCE_PATHS = {"interfaces": "/interface", "addresses": "/ip/address", "firewall": "/ip/firewall/filter", "routes": "/ip/route", "logs": "/log"}
+RESOURCE_PATHS = {"interfaces": "/interface", "addresses": "/ip/address", "firewall": "/ip/firewall/filter", "routes": "/ip/route", "logs": "/log", "ppp-profiles": "/ppp/profile", "ppp-secrets": "/ppp/secret", "system-clock": "/system/clock"}
+PPP_SECRET_SENSITIVE = ("password", "caller-id", "last-caller-id")
+REDACTED_PLACEHOLDER = "••••••"
 ACTION_MAP = {"interface-disable": ("/interface", "set", "disabled", "yes"), "interface-enable": ("/interface", "set", "disabled", "no"), "firewall-disable": ("/ip/firewall/filter", "set", "disabled", "yes"), "firewall-enable": ("/ip/firewall/filter", "set", "disabled", "no")}
 
 class RouterCreate(BaseModel):
@@ -72,12 +74,24 @@ async def create_router(item: RouterCreate):
     await db.routers.insert_one(doc)
     return {"ok": True, "message": "Router queued for secure connection test"}
 
+def sanitize_error(exc: Exception, router: dict) -> str:
+    msg = str(exc)[:180]
+    for value in (router.get("host"), router.get("username")):
+        if value: msg = msg.replace(value, "[redacted]")
+    return msg
+
 @api.get("/routers/{router_id}/resources/{resource}")
-async def read_resource(router_id: str, resource: str):
+async def read_resource(router_id: str, resource: str, reveal: bool = Query(False)):
     if resource not in RESOURCE_PATHS: raise HTTPException(400, "Resource is not allow-listed")
     router = await router_doc(router_id)
-    try: return {"resource": resource, "items": await asyncio.to_thread(ros_call, router, RESOURCE_PATHS[resource])}
-    except Exception as exc: raise HTTPException(502, f"RouterOS read failed: {str(exc)[:180]}")
+    try:
+        items = await asyncio.to_thread(ros_call, router, RESOURCE_PATHS[resource])
+    except Exception as exc: raise HTTPException(502, f"RouterOS read failed: {sanitize_error(exc, router)}")
+    redacted = False
+    if resource == "ppp-secrets" and not reveal:
+        items = [{**row, **{field: REDACTED_PLACEHOLDER for field in PPP_SECRET_SENSITIVE if field in row}} for row in items]
+        redacted = True
+    return {"resource": resource, "items": items, "redacted": redacted}
 
 @api.post("/routers/{router_id}/actions/{action}")
 async def execute_action(router_id: str, action: str, request: ActionRequest):
@@ -88,7 +102,7 @@ async def execute_action(router_id: str, action: str, request: ActionRequest):
         result = await asyncio.to_thread(ros_call, router, path, command, {".id": request.item_id, key: value})
         await db.audit_log.insert_one({"router_id": router_id, "action": action, "item_id": request.item_id, "created_at": datetime.now(timezone.utc).isoformat()})
         return {"ok": True, "action": action, "result": result}
-    except Exception as exc: raise HTTPException(502, f"RouterOS action failed: {str(exc)[:180]}")
+    except Exception as exc: raise HTTPException(502, f"RouterOS action failed: {sanitize_error(exc, router)}")
 
 @api.get("/routers/{router_id}/backups")
 async def backup_history(router_id: str):

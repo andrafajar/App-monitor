@@ -1,0 +1,30 @@
+{
+  "summary": "Tested new read-only RouterOS views (logs, ppp-profiles, ppp-secrets, system-clock) end-to-end. Backend: 22 pytest cases in /app/backend/tests/test_readonly_resources.py all pass (health, overview, resource allow-list, reveal param, action allow-list/write protection, backup history/now/schedule). Frontend: dashboard loads, router drawer opens for r-01, all six tabs present with correct data-testids, each new tab fires the API, shows the loading spinner then the demo-router config message; console button label is 'Open native API console' (no WebFig). No 500s, no credential leakage observed.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Router detail drawer tab strip", "issues": ["Six tabs are cramped in the 280px drawer; 'PPP Profiles', 'PPP Secrets', 'System Time' wrap onto two lines and labels are ~10px, hurting legibility/tap targets. Consider horizontal scroll strip or shorter labels (Profiles/Secrets/Clock)."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_readonly_resources.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Blocker for further verification: CREDENTIALS_FERNET_KEY is not set in backend/.env, so POST /api/routers returns 503 and no managed router can be created. Consequence: PPP-secret redaction (•••••• placeholder), reveal=true unredacted path, res-table success rendering, and the ppp-secrets-reveal-toggle button were NOT exercised in a success state anywhere (backend or UI).",
+    "Optional: tighten drawer tab layout (see design_issues)."
+  ],
+  "critical_code_review_comments": [
+    "read_resource redacts only 'password' and 'caller-id' for ppp-secrets; RouterOS /ppp/secret rows can also expose 'last-caller-id' and comments containing credentials - consider extending PPP_SECRET_SENSITIVE.",
+    "reveal=true is accepted with no auth/role check; once real routers are onboarded, gate plaintext password reveal behind Super Admin auth and write an audit_log entry (audit_log is only written for write actions today).",
+    "ros_call raises RuntimeError on ImportError inside a to_thread call that is caught by a broad `except Exception` and surfaced as 502; acceptable, but the 502 message truncation (180 chars) may still echo router hostnames/usernames from the driver exception to the browser - sanitize.",
+    "ResourceTable is keyed by position, not tab; state resets are handled via the effect, but adding key={drawerTab} would avoid stale-render risk if columns/mappings grow."
+  ],
+  "updated_files": ["/app/backend/tests/test_readonly_resources.py"],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "100% of testable read-only flows"},
+  "seed_data_creation": "None persisted. Attempted POST /api/routers (TEST_Unreachable) returned 503 due to missing CREDENTIALS_FERNET_KEY, so no data was written.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "No auth in app; /app/memory/test_credentials.md not required for these flows",
+  "context_for_next_testing_agent": "Demo routers r-01..r-04 intentionally 404 on resource/action/backup endpoints (expected safety gate) - do not flag. Regression suite: /app/backend/tests/test_readonly_resources.py (plus older test_management_api.py / test_monitoring_api.py which skip). Untested success paths: ppp-secrets redaction/reveal, resource tables with rows, system-time-panel population - all blocked until CREDENTIALS_FERNET_KEY + a real/managed router exist.",
+  "rca_of_the_issue": "No defects found. The only gap is environmental: missing CREDENTIALS_FERNET_KEY prevents onboarding a managed router, so the success/redaction branches of the new endpoints and the reveal toggle cannot be verified."
+}

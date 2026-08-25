@@ -1,0 +1,44 @@
+{
+  "summary": "Completed iteration 3 regression testing: all 13 public backend checks passed, while desktop/mobile dashboard flows and native API controls were exercised. One Backup Now messaging mismatch remains for demo data.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Backup Now on demo dashboard",
+        "issue": "The button calls the demo router ID and receives 404 'Router not found in managed inventory'; the configuration-gated UX should explicitly explain that backup execution is unavailable until backup settings and a managed router are configured.",
+        "affected_selectors": ["[data-testid=backup-now-button]", "[data-testid=notification-toast]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_monitoring_api.py",
+    "/app/backend/tests/test_management_api.py",
+    "/app/test_reports/pytest/iteration_3_results.xml"
+  ],
+  "action_items": [
+    "Make Backup Now detect demo/unmanaged router state or add a configuration gate before POST, and show an explicit configuration-required message rather than a missing-inventory error."
+  ],
+  "critical_code_review_comments": [
+    "Monitoring overview and RouterOS reads/writes are MOCKED/demo or configuration-gated; binary/text backup transfer, encryption, SMTP attachments, and scheduler execution are not live.",
+    "Authentication and tenant/RBAC enforcement remain intentionally deferred; management endpoints must stay behind a trusted network until implemented."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_3.json",
+    "/app/test_reports/pytest/iteration_3_results.xml"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13)",
+    "frontend": "86% of tested flows"
+  },
+  "seed_data_creation": "None; used the existing demo overview fleet and created no managed router records.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Health/overview, allow-lists, item ID validation, secret-free history, drawer tabs, native API label, search, mobile navigation, and direct API error toasts passed. Retest Backup Now messaging after the demo/configuration gate is adjusted. Live RouterOS, backups, SMTP, scheduler, authentication, and RBAC remain untested and MOCKED/configuration-gated.",
+  "test_credentials": "Not applicable; no auth flow was tested and no credentials were supplied.",
+  "rca of the issue": "The frontend always posts /api/routers/{selected-or-first-demo-id}/backup-now. The backend first calls router_doc(), so demo IDs that are not persisted return 404 before reaching its configuration-required response. Gate the action for demo data or return a consistent configuration-required status/message for this safe preview state."
+}

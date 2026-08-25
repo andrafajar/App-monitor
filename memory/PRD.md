@@ -16,9 +16,12 @@ Build a full-stack, responsive web application for Centralized Multi-MikroTik Ma
 - Added router detail drawer with Interfaces, Resources, and Logs tabs plus connection/console action feedback.
 - Added `/api/monitoring/overview` and `/api/health` endpoints with MongoDB-safe health handling.
 - Added Ubuntu 24.04 setup notes and integration boundaries in the root README.
+- Added a fixed-operation RouterOS API adapter boundary for native reads and writes, credential encryption requirements, backup history/schedule endpoints, direct API action panel, and Backup Now workflow feedback.
 
 ## Remaining backlog
 - P0: connect RouterOS API-SSL polling with per-router credential encryption and connection test.
+- P0: connect the named interface/IP/firewall/route reads and enable/disable actions to the first real router; keep reboot behind Super Admin confirmation.
+- P0: implement binary/text file transfer, server backup storage, SMTP attachments, and scheduled backup worker after SMTP and router credentials are configured.
 - P0: add real JWT authentication and tenant-scoped RBAC enforcement.
 - P1: add PostgreSQL/Redis deployment profile or document the migration path from the easy MongoDB starter.
 - P1: add Telegram Bot API secrets, alarm rule persistence, deduplication, and recovery notifications.

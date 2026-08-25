@@ -1,0 +1,51 @@
+{
+  "summary": "Completed iteration 4 regression testing. Backup Now now returns the explicit configuration-required response for demo routers; health, overview, management boundaries, desktop panels, router drawer, and mobile navigation passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Native RouterOS resource actions",
+        "issue": "Demo router resource requests correctly surface unavailable/configuration-gated errors because no managed router credentials exist; live RouterOS execution remains MOCKED.",
+        "affected_selectors": ["[data-testid=api-interfaces-action]", "[data-testid=api-addresses-action]", "[data-testid=api-firewall-action]"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Aggregate traffic chart",
+        "issues": ["Browser console still reports transient Recharts width(-1)/height(-1) warnings during initial render; chart recovers visually."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_monitoring_api.py",
+    "/app/backend/tests/test_management_api.py",
+    "/app/test_reports/pytest/iteration_4_results.xml"
+  ],
+  "action_items": [
+    "Keep the explicit Backup Now configuration-required response and add a managed-router/settings gate when real configuration is introduced.",
+    "Guard ResponsiveContainer until its parent has non-zero dimensions to remove chart console warnings.",
+    "Implement and re-test live RouterOS reads/writes, binary/text backup transfer and encryption, SMTP attachments, scheduler execution, and authentication/RBAC before treating those integrations as production-ready."
+  ],
+  "critical_code_review_comments": [
+    "Monitoring overview values and RouterOS execution, backup transfer/encryption, SMTP delivery, and scheduler execution are MOCKED or configuration-gated; the UI/API must not imply these are live.",
+    "Management endpoints still have no authentication or tenant/RBAC enforcement; keep them behind a trusted network until authorization is implemented."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_management_api.py",
+    "/app/test_reports/pytest/iteration_4_results.xml",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13)",
+    "frontend": "100% of tested flows"
+  },
+  "seed_data_creation": "None; used existing demo overview rows and created no managed router records.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Backup Now messaging, health/overview, allow-list validation, secret-free history, desktop native API/backup panel rendering, drawer tabs, and mobile sidebar passed. Live RouterOS, backup files/encryption, SMTP, scheduler, authentication, and RBAC remain untested and MOCKED/configuration-gated. test_credentials.md contains no credentials.",
+  "rca of the issue": "The prior stale regression expected 404 for demo Backup Now, but the current backend intentionally catches missing demo inventory and returns HTTP 200 with status configuration_required and required settings in the message. The regression assertion was updated to match the new contract. Browser diagnostics also confirm Recharts mounts before its container is measured, producing transient negative-dimension warnings."
+}

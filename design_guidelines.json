@@ -1,0 +1,57 @@
+{
+  "app_name": "NetPulse MikroTik Centralized Management & Real-Time Monitoring",
+  "theme": "Modern RouterOS v7 WebFig / Winbox Dark Theme",
+  "colors": {
+    "background": "#0b0f17",
+    "surface": "#131b2e",
+    "surface_hover": "#1e293b",
+    "border": "#1e293b",
+    "primary": "#38bdf8",
+    "accent": "#0ea5e9",
+    "text_primary": "#f8fafc",
+    "text_secondary": "#94a3b8",
+    "success": "#22c55e",
+    "warning": "#eab308",
+    "danger": "#ef4444",
+    "routeros_accent": "#0099ff"
+  },
+  "typography": {
+    "font_family_sans": "Inter, system-ui, -apple-system, sans-serif",
+    "font_family_mono": "JetBrains Mono, Fira Code, monospace",
+    "headings": "text-2xl sm:text-3xl font-bold tracking-tight text-white",
+    "body": "text-sm text-slate-300"
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-[#131b2e]/80 border border-[#1e293b]/80 shadow-2xl",
+    "border_radius": "rounded-lg",
+    "status_badges": "High contrast status badges with glowing indicator dots"
+  },
+  "grids_and_layouts": {
+    "dashboard_grid": "grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6",
+    "table_density": "dense tabular data layouts with sorting, filtering, and quick action buttons"
+  },
+  "motion_and_interactions": {
+    "transition": "transition-all duration-200 ease-in-out",
+    "hover_effects": "hover:bg-slate-800/60 hover:border-slate-700"
+  },
+  "accessibility": {
+    "contrast": "WCAG AA compliant dark contrast with clear focus rings",
+    "test_attributes": "All interactive elements include data-testid attributes (kebab-case)"
+  },
+  "image_urls": [],
+  "instructions_to_main_agent": [
+    "Build a full-stack MikroTik Centralized Management & Monitoring app with FastAPI backend and React frontend.",
+    "Implement real MikroTik RouterOS API connectivity (librouteros / ros-api) with fallback simulation demo routers.",
+    "Create centralized monitoring dashboard with real-time CPU, Memory, Uptime, Interface Traffic widgets.",
+    "Build device & group management, RBAC/tenant management, threshold alarms, Telegram Bot alerts configuration.",
+    "Implement Winbox-inspired read/write configuration tabs: Interfaces, IP Addresses, Routes, Firewall, System Resources, Logs, Terminal CLI emulator.",
+    "Ensure Ubuntu 24.04 easy installation instructions and setup script are provided.",
+    "Use dark slate gray theme (#0b0f17, #131b2e, #38bdf8 accents), dense tables, and high contrast badges.",
+    "Add test-id attributes to all interactive elements for robust automated testing."
+  ],
+  "universal_guidelines": [
+    "Do not use transparent backgrounds without blur or scrim.",
+    "Ensure all interactive elements have data-testid attributes.",
+    "Use dense tabular layouts and dark winbox aesthetics."
+  ]
+}

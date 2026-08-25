@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+html,body,#root{margin:0;min-height:100%;background:#080d16}
+*{scrollbar-color:#263852 #0b1220;scrollbar-width:thin}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #38bdf8;outline-offset:2px}

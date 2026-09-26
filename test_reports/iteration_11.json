@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 11 broad end-to-end review covering AUTH+RBAC+Workspaces+Groups+Router-writes+Terminal+Backups+Telegram (backend) and the corresponding frontend flows on the public URL. Backend pytest: 27/28 PASS in /app/backend/tests/test_iteration11.py. Frontend: login redirect + wrong-password error + successful admin login + sidebar admin nav + workspace-selector dropdown + My settings ROS creds form + Groups row → group-settings modal (name, parent, router row for mr-65920574, notifications button all present) + full router-workspace write flow on REAL router mr-65920574 (addresses add via config-editor → toast 'Addresses: entry added' → remove via confirm-remove-submit) + interfaces set-only (no interfaces-add, has interfaces-edit-0) + terminal '/ip address print' returns 'rows ·' in output + backups create/download/delete all working + logout returns to login and reload stays. Real router mr-65920574 host/port/username/password never modified; all QA test users/roles/groups/backups/addresses removed at end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login (lockout)", "issue": "5 consecutive wrong-password attempts against a throwaway email never returned 429 — got 6 × 401. Root cause: login_attempts identifier is 'client.host:email' and behind the K8s ingress the perceived client.host appears to vary across HTTPS requests (each request from a different proxy IP), so each attempt lands on a fresh counter. Server-side lockout is effectively bypassable through the public URL. Consider using X-Forwarded-For (first hop) or purely email-based identifier with an IP-based secondary cap."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Overview", "issues": ["Recharts logs benign warning 'The width(-1) and height(-1) of chart should be greater than 0…' twice during initial render before container sizes settle — cosmetic only."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11.py",
+    "/app/test_reports/pytest/iteration11.xml"
+  ],
+  "action_items": [
+    "Fix login rate-limit identifier so 5-strike lockout is not bypassed behind the reverse proxy (use email-only or trust X-Forwarded-For). Currently 5×wrong-password lockout is a no-op through the public URL."
+  ],
+  "critical_code_review_comments": [
+    "auth.py login_attempts identifier 'ident = client.host:email' relies on request.client.host, which through the K8s ingress can rotate per connection, so the 5-attempt lockout never trips from external traffic. Either enable Uvicorn's ProxyHeadersMiddleware and trust X-Forwarded-For, or key attempts on email only (with a separate IP-wide cap).",
+    "server.py write_config: when command=='remove' the code overwrites params with {'.id': item_id} — the earlier KEY_RE / value-length validation on body.values is bypassed for the remove path (harmless today because values are ignored, but the validation gate is misleading).",
+    "server.py dispatch_alarm: if no role with telegram.enabled has access, response is 409 — but the review request says the alarm should 'still be logged'. Currently the log insert only happens after the 409 is raised (unreachable). Consider logging even the 'no-recipient' event for audit trail.",
+    "server.py terminal parse_terminal: 'else target[\".id\"] = tok if verb in (\"set\",\"remove\",\"enable\",\"disable\") else target.get(\".id\", tok)' silently swallows unknown positional tokens on print — small correctness smell.",
+    "admin.py group_access users query with role_id $in [...] AND allowed_group_ids: None can miss users who have allowed_group_ids explicitly set to [] (empty list is not None). Consider matching {'$or':[{'allowed_group_ids': group_id}, {'role_id': {'$in': role_ids}, '$or':[{'allowed_group_ids': None}, {'allowed_group_ids': {'$exists': False}}]}]}.",
+    "auth.py set_auth_cookies uses SameSite='none'; Secure=True — good for the preview domain. Note POST /api/auth/session still writes session_token cookie even when the caller only wanted a Bearer flow; fine but document.",
+    "server.py grew again (~570 lines) — Terminal, Backups, Telegram, RouterOS pool, resource routes, alarm routes all mixed. Splitting into modules would ease review."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration11.py", "/app/test_reports/iteration_11.json"],
+  "success_rate": {"backend": "96% (27/28)", "frontend": "100% (all acceptance flows in review request that were exercised passed; qa-viewer 428 popup flow validated at the API layer only)"},
+  "test_credentials": "Super Admin admin@netpulse.local / Np-6oFKw7vnJ0Gr (from /app/memory/test_credentials.md). Real router mr-65920574 host/port/username/password unchanged. All QA-created users, roles, groups, workspaces, addresses (10.255.255.253/32, 10.255.255.254/32 with comment netpulse-*), and backups were removed at end of run — verified with a final GET /api/routers/mr-65920574/{backups,resources/addresses}.",
+  "seed_data_creation": "Ephemeral only: QA Viewer/QA Nogroup/QA TG roles + qa.viewer/qa.nogroup users + QA Parent/QA Child groups + QA Tenant workspace + temp addresses on real router + one .rsc backup — every one deleted via test teardown or explicit curl at end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New backend suite at /app/backend/tests/test_iteration11.py (28 tests) is the up-to-date regression covering iteration 11. Older suites (test_management_api.py, test_router_inventory.py etc.) predate auth and will 401 — do not 'fix' them, either add Bearer or delete. Sidebar test-ids come from api.js slug(): 'Groups & Tenants' → nav-groups-tenants (NOT nav-groups-&-tenants); use that pattern in future scripts. Real router mr-65920574 must never have its host/port/username/password modified. When testing backups, always delete created rows at end (there is no automatic cleanup). Login rate-limit is currently NOT enforced through the public URL — factor that in when writing lockout tests.",
+  "rca_of_the_issue": "Login rate-limit bypass: db.login_attempts uses key request.client.host + email. Behind the preview ingress the connecting proxy IP is not sticky per client, so every attempt lands on a fresh 'attempt' document, count never reaches 5, and 429 is never returned. Mitigation: enable Starlette ProxyHeadersMiddleware and honor X-Forwarded-For, OR change identifier to email only (with a separate IP-cap), OR key by a stable JA3/user-agent+email hash."
+}

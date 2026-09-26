@@ -98,7 +98,7 @@ async def current_workspace(request: Request, user: dict) -> str:
 @auth_router.post("/login")
 async def login(body: LoginIn, request: Request, response: Response):
     email = body.email.strip().lower()
-    ident = f"{request.client.host if request.client else 'x'}:{email}"
+    ident = f"email:{email}"
     attempt = await db.login_attempts.find_one({"identifier": ident})
     now = datetime.now(timezone.utc)
     if attempt and attempt.get("count", 0) >= 5:

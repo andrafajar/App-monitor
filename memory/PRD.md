@@ -1,36 +1,35 @@
-# NetPulse MikroTik Control Plane PRD
+# NetPulse — Centralized MikroTik Management & Monitoring
 
 ## Original problem statement
-Build a full-stack, responsive web application for Centralized Multi-MikroTik Management & Real-Time Monitoring System, self-hosted on a local/cloud server as a web-based alternative to Winbox with persistent connections, multi-tenancy, and central monitoring. Required direction: React/Tailwind/Lucide/Shadcn frontend, FastAPI backend, RouterOS API, live monitoring, threshold alarms, Telegram alerts, RBAC, easy Ubuntu 24.04 installation.
+Self-hosted, multi-router MikroTik control plane (FastAPI + React + MongoDB) using the RouterOS native API (port 8728/8729, no WebFig iframe). Winbox-like per-router workspace, groups/tenants, users & roles, Telegram alerts, backups, easy installation.
 
-## Product decisions
-- Persona: network operator or partner administrator managing several MikroTik routers.
-- First release prioritizes monitoring dashboard, device/group management, RBAC screens, alarms, and router detail views.
-- Real router connectivity is the target; no credentials were supplied during this build, so the preview uses safe demo data.
-- Seeded Super Admin screens are used now; full authentication is deferred.
-- Existing FastAPI + MongoDB environment is retained to keep installation simple for a beginner.
+## User decisions (verbatim-faithful)
+- Keep MongoDB (PostgreSQL/Redis deferred).
+- Writes to RouterOS allowed from the workspace (add/edit/remove like Winbox); if the MikroTik user is read-only show popup "not enough permission".
+- Auth: email+password (JWT) **and** Google (Emergent-managed). Super Admin seeded; other roles fully custom (per-module none/read/write + explicit device groups).
+- Each user MUST enter their own MikroTik credentials in *My settings*; shared routers only expose name + IP (owner/Super Admin may still use stored credentials).
+- Groups are hierarchical (parent → child); access is explicit per group (no inheritance).
+- Multiple workspaces (tenants) with rename/create/delete.
+- Telegram bot token + chat ID stored **per role** (encrypted with CREDENTIALS_FERNET_KEY).
+- Backups: `.rsc` snapshot via API only (no FTP), stored in Emergent Object Storage.
+- Terminal menu in router workspace.
+- One-shot installation (Docker Compose + install.sh).
 
-## Implemented — 2026-08-25
-- Built NetPulse RouterOS-inspired dark monitoring workspace with responsive sidebar navigation.
-- Added fleet metrics, aggregate traffic chart, alarm center, router table, search, group filters, status badges, and mobile navigation.
-- Added router detail drawer with Interfaces, Resources, and Logs tabs plus connection/console action feedback.
-- Added read-only RouterOS drawer tabs (Logs, PPP Profiles, PPP Secrets, System Time) with loading/error states, safe demo-router config messaging, and PPP secret password redaction with a reveal toggle.
-- Extended backend `RESOURCE_PATHS` allow-list with `ppp-profiles`, `ppp-secrets`, `system-clock`; added `?reveal=true` query param plus a `sanitize_error()` helper that scrubs host/username from 502 messages.
-- Added `/api/monitoring/overview` and `/api/health` endpoints with MongoDB-safe health handling.
-- Added Ubuntu 24.04 setup notes and integration boundaries in the root README.
-- Added a fixed-operation RouterOS API adapter boundary for native reads and writes, credential encryption requirements, backup history/schedule endpoints, direct API action panel, and Backup Now workflow feedback.
+## Architecture
+- `backend/core.py` (db, MODULES, Fernet), `auth.py` (JWT + Google session, /api/auth/*), `admin.py` (workspaces, groups tree, roles, users, /groups/{id}/access), `server.py` (routers, resources, config writes, terminal, backups, Telegram per role, alarms, audit, legacy migration), `storage.py` (object storage).
+- Frontend: `src/App.js` shell + routes, `src/auth/AuthContext.jsx`, `src/lib/api.js` (Bearer + X-Workspace), `src/lib/ros.js`, `src/pages/*` (Login, Users, Roles, Workspaces, Groups(+GroupSettings), MySettings, NotificationsPanel), `src/components/*` (RouterWorkspace, ConfigEditor, TerminalPanel, BackupsPanel, Modal, Status).
+- Deploy: `docker-compose.yml`, `deploy/Dockerfile.*`, `deploy/nginx.conf`, `install.sh`, `README-INSTALL.md`.
+- RouterOS pools keyed `router:user`; HTTP 428 = user must set own MikroTik credentials; 403 "not enough permission" = RouterOS policy.
 
-## Remaining backlog
-- P0: connect RouterOS API-SSL polling with per-router credential encryption and connection test.
-- P0: connect the named interface/IP/firewall/route reads and enable/disable actions to the first real router; keep reboot behind Super Admin confirmation.
-- P0: implement binary/text file transfer, server backup storage, SMTP attachments, and scheduled backup worker after SMTP and router credentials are configured.
-- P0: add real JWT authentication and tenant-scoped RBAC enforcement.
-- P1: add PostgreSQL/Redis deployment profile or document the migration path from the easy MongoDB starter.
-- P1: add Telegram Bot API secrets, alarm rule persistence, deduplication, and recovery notifications.
-- P1: add WebSocket live updates and native RouterOS graph fetching.
-- P2: add drag-and-drop widget layouts, write-protected configuration commands, and audit history.
+## Implemented (chronological)
+- Read-only Winbox views, sidebar routing fix, Add/Edit router, offline-status fix, pooled sessions (iter 5–10).
+- 2026-09-26: Groups CRUD + per-view heading buttons (iter 9, 100%). Edit router (iter 10, 100%).
+- 2026-09-26: Auth (JWT + Google), Users/Roles/Workspaces, hierarchical groups, per-user ROS credentials, RouterOS add/set/remove with permission popup, Terminal, .rsc backups to object storage, Telegram per role, group settings modal, audit log, Docker install (iter 11: backend 27/28 → lockout fixed, frontend 100%).
 
-## Next tasks
-1. Collect RouterOS API-SSL endpoint and Telegram bot credentials.
-2. Implement encrypted secret storage and a single-worker polling service.
-3. Replace fallback overview values with real metrics while retaining an offline/demo mode.
+## Credentials
+See `/app/memory/test_credentials.md`. A Google account (andrafajarramadhan1999@gmail.com) signed in and currently has Viewer role / no workspace — promote via Users.
+
+## Backlog
+- P0: automatic alarm evaluation (CPU threshold / interface change / unreachable) → dispatch to role Telegram; scheduled backups.
+- P1: WebSocket realtime, traffic graphs from RouterOS (replace sample chart), drag-and-drop dashboard widgets, more Winbox menus (bridge, VLAN, hotspot, wireless config).
+- P2: PostgreSQL/Redis migration (deferred), SMTP delivery of backups, workspace-level Telegram override.

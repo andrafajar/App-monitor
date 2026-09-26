@@ -303,6 +303,7 @@ async def write_config(router_id: str, resource: str, command: str, body: Config
     if resource not in RESOURCE_PATHS: raise HTTPException(400, "Resource is not allow-listed")
     if command not in WRITE_COMMANDS.get(resource, set()): raise HTTPException(400, f"'{command}' is not allowed on {resource}")
     if command in ("set", "remove") and not body.item_id and resource not in ("system-clock", "system-identity"): raise HTTPException(422, "item_id is required")
+    if command == "remove": body.values = {}
     for k, v in body.values.items():
         if not KEY_RE.match(k): raise HTTPException(422, f"Invalid property name: {k}")
         if len(v) > 500: raise HTTPException(422, f"Value too long for {k}")

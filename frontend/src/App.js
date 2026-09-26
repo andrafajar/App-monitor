@@ -40,15 +40,15 @@ function Metric({ icon: Icon, label, value, detail, tone = "cyan" }) {
 }
 
 function AddRouterModal({ open, onClose, groups, onCreated, onNotice, editing, canEditCreds }) {
-  const blank = { name: "", host: "", port: "8728", ssh_port: "22", telnet_port: "23", username: "", password: "", group_id: groups?.[0]?.id || "", description: "" };
+  const blank = { name: "", host: "", port: "8728", use_ssl: false, ssh_port: "22", telnet_port: "23", username: "", password: "", group_id: groups?.[0]?.id || "", description: "" };
   const [form, setForm] = useState(blank);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) setForm(editing ? { name: editing.name, host: editing.host, port: String(editing.port || 8728), ssh_port: String(editing.ssh_port || 22), telnet_port: String(editing.telnet_port || 23), username: editing.username || "", password: "", group_id: editing.group_id || "", description: editing.description || "" } : blank); }, [open, editing]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) setForm(editing ? { name: editing.name, host: editing.host, port: String(editing.port || 8728), use_ssl: !!editing.use_ssl, ssh_port: String(editing.ssh_port || 22), telnet_port: String(editing.telnet_port || 23), username: editing.username || "", password: "", group_id: editing.group_id || "", description: editing.description || "" } : blank); }, [open, editing]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);
-    const body = { name: form.name.trim(), host: form.host.trim(), port: parseInt(form.port, 10) || 8728, ssh_port: parseInt(form.ssh_port, 10) || 22, telnet_port: parseInt(form.telnet_port, 10) || 23, username: form.username.trim(), group_id: form.group_id, description: form.description.trim() };
+    const body = { name: form.name.trim(), host: form.host.trim(), port: parseInt(form.port, 10) || 8728, use_ssl: !!form.use_ssl, ssh_port: parseInt(form.ssh_port, 10) || 22, telnet_port: parseInt(form.telnet_port, 10) || 23, username: form.username.trim(), group_id: form.group_id, description: form.description.trim() };
     try {
       if (editing) {
         if (form.password) body.password = form.password;
@@ -70,11 +70,14 @@ function AddRouterModal({ open, onClose, groups, onCreated, onNotice, editing, c
       <label>Description<input maxLength={200} value={form.description} onChange={e => set("description", e.target.value)} placeholder="Core router at IDC rack 3 (optional)" data-testid="add-router-description" /></label>
       <label>Host / IP<input required value={form.host} onChange={e => set("host", e.target.value)} placeholder="10.10.0.1" data-testid="add-router-host" /></label>
       <div className="two-col">
-        <label>API port<select value={form.port} onChange={e => set("port", e.target.value)} data-testid="add-router-port"><option value="8728">8728 · plaintext</option><option value="8729">8729 · api-ssl</option></select></label>
-        <label>SSH port (terminal)<input type="number" min={1} max={65535} value={form.ssh_port} onChange={e => set("ssh_port", e.target.value)} placeholder="22" data-testid="add-router-ssh-port" /></label>
+        <label>API port<input type="number" min={1} max={65535} required value={form.port} onChange={e => set("port", e.target.value)} placeholder="8728" data-testid="add-router-port" /></label>
+        <label className="ssl-toggle"><input type="checkbox" checked={!!form.use_ssl} onChange={e => set("use_ssl", e.target.checked)} data-testid="add-router-ssl" /><span>API-SSL</span></label>
       </div>
       <div className="two-col">
+        <label>SSH port (terminal)<input type="number" min={1} max={65535} value={form.ssh_port} onChange={e => set("ssh_port", e.target.value)} placeholder="22" data-testid="add-router-ssh-port" /></label>
         <label>Telnet port (terminal)<input type="number" min={1} max={65535} value={form.telnet_port} onChange={e => set("telnet_port", e.target.value)} placeholder="23" data-testid="add-router-telnet-port" /></label>
+      </div>
+      <div className="two-col">
         <label>Group<select required value={form.group_id} onChange={e => set("group_id", e.target.value)} data-testid="add-router-group"><option value="">— select group —</option>{groups.map(g => <option key={g.id} value={g.id}>{g.path}</option>)}</select></label>
       </div>
       {!credsLocked && <>
@@ -84,7 +87,7 @@ function AddRouterModal({ open, onClose, groups, onCreated, onNotice, editing, c
       {credsLocked && <p className="muted">Stored credentials can only be changed by the router owner or a Super Admin.</p>}
       <div className="modal-actions">
         <button type="button" className="button secondary" onClick={onClose} data-testid="add-router-cancel">Cancel</button>
-        <button type="submit" className="button primary" disabled={busy} data-testid="add-router-submit">{editing ? <Save size={14} /> : <Plus size={14} />}{busy ? "Saving..." : editing ? "Save changes" : "Save router"}</button>
+        <button type="submit" className="button primary" disabled={busy} data-testid="add-router-submit">{editing ? <Save size={14} /> : <Plus size={14} />}{busy ? "Saving..." : editing ? "Save changes" : "Save device"}</button>
       </div>
     </form>
   </Modal>;
@@ -217,7 +220,7 @@ function Shell() {
             {traffic.series?.length ? <AggregateTrafficChart data={traffic.series} /> : <div className="drawer-message" data-testid="traffic-warming"><Activity size={16} />{data.routers.length ? "Reading interface byte counters from every reachable device — the first live point lands within 20 seconds." : "Add a device to start live bandwidth sampling."}</div>}</section>}
             {widget("alarms") && <section className="panel alarm-panel"><div className="panel-head"><div><p className="eyebrow">SIGNAL CENTER</p><h2>Recent alarms</h2></div><button className="text-btn" onClick={() => show("Alarms")} data-testid="view-all-alarms-button">View all <ChevronRight size={14} /></button></div><div className="alarm-list">{data.alarms.length === 0 && <div className="drawer-message"><Bell size={16} />No alarms yet.</div>}{data.alarms.slice(0, 3).map(a => <div key={a.id} className="alarm-item info"><div className="alarm-symbol"><AlertTriangle size={16} /></div><div><b>{a.kind}</b><span>{a.router_name}</span><small>{new Date(a.created_at).toLocaleString()}</small></div></div>)}</div></section>}</div>}
           {widget("devices") && <section className="panel routers-panel"><div className="panel-head table-head"><div><p className="eyebrow">INVENTORY / {routers.length} DEVICES</p><h2>Device fleet</h2></div><div className="table-tools"><div className="search"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter devices..." data-testid="router-search-input" /></div><select value={group} onChange={e => setGroup(e.target.value)} data-testid="router-group-filter"><option value="">All devices</option>{data.groups.map(g => <option key={g.id} value={g.id}>{g.path}</option>)}</select></div></div>
-            <div className="table-wrap"><table><thead><tr><th>ROUTER</th><th>GROUP</th><th>STATUS</th><th>CPU</th><th>MEMORY</th><th>VERSION</th><th>UPTIME</th><th></th></tr></thead><tbody>
+            <div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>GROUP</th><th>STATUS</th><th>CPU</th><th>MEMORY</th><th>VERSION</th><th>UPTIME</th><th></th></tr></thead><tbody>
               {routers.map(r => <tr key={r.id} onClick={() => openWorkspace(r)} data-testid={`router-row-${r.id}`}><td><div className="router-name"><div className={`router-icon ${r.color || "cyan"}`}><Router size={15} /></div><div><b>{r.name}</b><span>{r.host}{r.description ? ` · ${r.description}` : ""}</span></div></div></td><td><span className="group-label">{r.group}</span></td><td><Status value={r.status} /></td><td><div className="bar-value"><span>{r.cpu}%</span><i><b style={{ width: `${r.cpu}%` }} /></i></div></td><td><div className="bar-value"><span>{r.memory ? `${r.memory}%` : "—"}</span><i><b className={r.memory > 70 ? "warn" : ""} style={{ width: `${r.memory}%` }} /></i></div></td><td className="mono">{r.version}</td><td className="muted">{r.uptime}</td>
                 <td><div className="row-actions">{canWriteRouters && <button className="icon-btn" title="Edit device" onClick={(e) => { e.stopPropagation(); openEdit(r); }} data-testid={`router-edit-${r.id}`}><Pencil size={15} /></button>}{canWriteRouters && <button className="icon-btn tg-del" title="Remove" onClick={(e) => { e.stopPropagation(); removeRouter(r.id, r.name); }} data-testid={`router-delete-${r.id}`}><Trash2 size={15} /></button>}<button className="row-arrow" onClick={(e) => { e.stopPropagation(); openWorkspace(r); }} data-testid={`router-details-${r.id}`}><ChevronRight size={16} /></button></div></td></tr>)}
             </tbody></table>{routers.length === 0 && <div className="empty-state" data-testid="empty-router-state">{data.routers.length === 0 ? "No devices in this workspace yet — add one to start." : "No devices match this filter."}</div>}</div></section>}

@@ -26,7 +26,7 @@ function RuleModal({ open, onClose, editing, meta, onSaved, onNotice }) {
       <label>Rule name<input required minLength={2} value={form.name} onChange={e => set("name", e.target.value)} placeholder="SSH login failure" data-testid="rule-name" /></label>
       <div className="two-col">
         <label>Category<select value={form.category} onChange={e => set("category", e.target.value)} data-testid="rule-category"><option value="any">any category</option>{(meta.categories || []).map(c => <option key={c} value={c}>{c}</option>)}</select></label>
-        <label>Max severity<select value={form.severity_max} onChange={e => set("severity_max", e.target.value)} data-testid="rule-severity">{(meta.severities || []).map((s, i) => <option key={s} value={i}>{i} · {s} and worse</option>)}</select></label>
+        <label>Max severity<select value={form.severity_max} onChange={e => set("severity_max", e.target.value)} data-testid="rule-severity">{(meta.severities || []).map((s, i) => <option key={s} value={i}>{`${i} · ${s} and worse`}</option>)}</select></label>
       </div>
       <label>Extra text / regex (optional)<input value={form.pattern} onChange={e => set("pattern", e.target.value)} placeholder="via ssh|winbox" data-testid="rule-pattern" /></label>
       <div className="two-col">
@@ -90,7 +90,7 @@ export default function SyslogPage({ onNotice, devices, modalOpen, setModalOpen 
         <div><p className="eyebrow">SYSLOG COLLECTOR · {status?.listening ? `UDP ${status.port} LISTENING` : "NOT LISTENING"} · {status?.retention_days || 30}-DAY RETENTION</p><h2>Device log stream</h2></div>
         <div className="table-tools">
           <div className="search"><ScrollText size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search message..." data-testid="syslog-search" /></div>
-          <select value={category} onChange={e => setCategory(e.target.value)} data-testid="syslog-category-filter"><option value="">All categories</option>{(status?.categories || []).map(c => <option key={c} value={c}>{c} {counts[c] ? `(${counts[c]})` : ""}</option>)}</select>
+          <select value={category} onChange={e => setCategory(e.target.value)} data-testid="syslog-category-filter"><option value="">All categories</option>{(status?.categories || []).map(c => <option key={c} value={c}>{counts[c] ? `${c} (${counts[c]})` : c}</option>)}</select>
           <select value={device} onChange={e => setDevice(e.target.value)} data-testid="syslog-device-filter"><option value="">All devices</option>{(devices || []).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
           <button className="icon-btn" onClick={load} title="Reload" data-testid="syslog-reload"><RefreshCw size={15} /></button>
           {writable && <button className="button secondary compact" onClick={inject} disabled={busy === "test"} data-testid="syslog-inject"><Send size={13} />Inject test</button>}

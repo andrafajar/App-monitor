@@ -51,11 +51,13 @@ KEY_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 
 class RouterCreate(BaseModel):
     name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str; password: str
+    use_ssl: bool = False
     ssh_port: int = Field(22, ge=1, le=65535); telnet_port: int = Field(23, ge=1, le=65535)
     group_id: str; description: str = Field(default="", max_length=200)
 class RouterUpdate(BaseModel):
     name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str
-    password: str | None = None; ssh_port: int = Field(22, ge=1, le=65535); telnet_port: int = Field(23, ge=1, le=65535)
+    password: str | None = None; use_ssl: bool = False
+    ssh_port: int = Field(22, ge=1, le=65535); telnet_port: int = Field(23, ge=1, le=65535)
     group_id: str; description: str = Field(default="", max_length=200)
 class ConfigWrite(BaseModel):
     values: dict[str, str] = Field(default_factory=dict); item_id: str | None = Field(default=None, pattern=r"^\*[A-Za-z0-9]+$")
@@ -102,7 +104,8 @@ def ros_credentials(router: dict, user: dict, user_secret: dict) -> tuple[str, s
 def _new_pool(router: dict, username: str, password: str):
     import routeros_api
     port = router.get("port", 8728)
-    pool = routeros_api.RouterOsApiPool(router["host"], username=username, password=password, port=port, use_ssl=port == 8729, plaintext_login=port != 8729)
+    use_ssl = bool(router.get("use_ssl")) if router.get("use_ssl") is not None else port == 8729
+    pool = routeros_api.RouterOsApiPool(router["host"], username=username, password=password, port=port, use_ssl=use_ssl, plaintext_login=not use_ssl)
     pool.socket_timeout = 8
     return pool
 
@@ -175,7 +178,7 @@ def probe_router(router: dict, creds: tuple[str, str], user_id: str = "system") 
 def stored_creds(router: dict) -> tuple[str, str]:
     return router["username"], credential_box().decrypt(router["password_enc"].encode()).decode()
 
-MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "ssh_port", "telnet_port", "group", "group_id", "workspace_id", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "created_by", "last_probed_at", "updated_at")
+MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "use_ssl", "ssh_port", "telnet_port", "group", "group_id", "workspace_id", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "created_by", "last_probed_at", "updated_at")
 
 def sanitize_router(doc: dict, user: dict | None = None) -> dict:
     out = {k: doc[k] for k in MANAGED_PUBLIC_FIELDS if k in doc}

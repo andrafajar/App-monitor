@@ -78,12 +78,22 @@ async def move_node(device_id: str, body: NodeIn, request: Request, user: dict =
     return {"ok": True, "device_id": device_id, "x": body.x, "y": body.y}
 
 
+async def assert_scanned(device_id: str, iface: str):
+    """Links must be drawn between interfaces that SNMP actually discovered."""
+    state = await db.snmp_state.find_one({"device_id": device_id}, {"_id": 0, "interfaces": 1})
+    names = [i["name"] for i in (state or {}).get("interfaces") or []]
+    if not names: raise HTTPException(422, "Run an SNMP scan on that device first — link endpoints come from the SNMP interface list")
+    if iface not in names: raise HTTPException(422, f"'{iface}' is not in the SNMP interface list of that device")
+
+
 @topology_router.post("/topology/links")
 async def create_link(body: LinkIn, request: Request, user: dict = Depends(require("overview", "write"))):
     from server import audit, visible_router
     if body.a_device == body.b_device and body.a_iface == body.b_iface: raise HTTPException(422, "Pick two different interfaces")
     a = await visible_router(body.a_device, request, user)
     await visible_router(body.b_device, request, user)
+    await assert_scanned(body.a_device, body.a_iface)
+    await assert_scanned(body.b_device, body.b_iface)
     if await db.topo_links.find_one({"workspace_id": a["workspace_id"], "a_device": body.a_device, "a_iface": body.a_iface, "b_device": body.b_device, "b_iface": body.b_iface}):
         raise HTTPException(409, "That link already exists")
     doc = {"id": f"lnk-{uuid.uuid4().hex[:8]}", "workspace_id": a["workspace_id"], **body.model_dump(), "created_by": user["email"], "created_at": now().isoformat()}

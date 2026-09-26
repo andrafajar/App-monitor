@@ -46,7 +46,7 @@ export function SnmpPanel({ deviceId, deviceName, onNotice }) {
   return <div className="snmp-wrap" data-testid="snmp-panel">
     <div className="snmp-stats">
       <div className="snmp-stat" data-testid="snmp-ping"><span>ICMP ping</span><b>{state.ping?.ms ? `${state.ping.ms} ms` : "no reply"}</b><small>{state.ping?.loss ?? 100}% loss · every 60s</small></div>
-      <div className="snmp-stat" data-testid="snmp-cpu"><span>CPU load</span><b>{snmp.cpu ?? 0}%</b><small>hrProcessorLoad average</small></div>
+      <div className="snmp-stat" data-testid="snmp-cpu"><span>CPU load</span><b>{snmp.cpu ? `${snmp.cpu}%` : "—"}</b><small>hrProcessorLoad average</small></div>
       <div className="snmp-stat" data-testid="snmp-sysname"><span>System name</span><b>{snmp.sysname || "—"}</b><small>{snmp.uptime || "uptime unknown"}</small></div>
       <div className="snmp-stat" data-testid="snmp-count"><span>Interfaces</span><b>{ifaces.length}</b><small>{snmp.polled_at ? `polled ${new Date(snmp.polled_at).toLocaleTimeString()}` : "never polled"}</small></div>
     </div>

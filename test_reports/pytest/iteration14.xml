@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="24" time="52.577" timestamp="2026-09-26T10:27:40.397342+00:00" hostname="agent-env-1ed67698-a068-4bf1-a241-cb7114e0b592"><testcase classname="tests.test_iteration14.TestMonitorStatus" name="test_monitor_status_shape" time="0.514" /><testcase classname="tests.test_iteration14.TestMonitorStatus" name="test_metrics_has_retention" time="0.068" /><testcase classname="tests.test_iteration14.TestSnmpApi" name="test_get_snmp_no_community_leak" time="0.065" /><testcase classname="tests.test_iteration14.TestSnmpApi" name="test_scan_now_populates_interfaces" time="0.805" /><testcase classname="tests.test_iteration14.TestSnmpApi" name="test_put_snmp_persists" time="0.133" /><testcase classname="tests.test_iteration14.TestSnmpApi" name="test_snmp_wrong_community_error" time="5.421" /><testcase classname="tests.test_iteration14.TestSnmpApi" name="test_non_mikrotik_read_resource_400" time="0.106" /><testcase classname="tests.test_iteration14.TestDeviceCreate" name="test_mikrotik_without_creds_422" time="0.127" /><testcase classname="tests.test_iteration14.TestDeviceCreate" name="test_snmp_enabled_without_community_422" time="0.064" /><testcase classname="tests.test_iteration14.TestDeviceCreate" name="test_create_non_mikrotik_with_snmp[huawei]" time="0.800" /><testcase classname="tests.test_iteration14.TestDeviceCreate" name="test_create_non_mikrotik_with_snmp[cisco]" time="0.749" /><testcase classname="tests.test_iteration14.TestDeviceCreate" name="test_create_non_mikrotik_with_snmp[other]" time="0.752" /><testcase classname="tests.test_iteration14.TestDeviceCreate" name="test_cleanup_created_devices" time="0.194" /><testcase classname="tests.test_iteration14.TestTopology" name="test_get_topology_has_nodes" time="0.060" /><testcase classname="tests.test_iteration14.TestTopology" name="test_move_node_persists" time="0.131" /><testcase classname="tests.test_iteration14.TestTopology" name="test_interfaces_pick_list" time="0.065" /><testcase classname="tests.test_iteration14.TestTopology" name="test_create_and_duplicate_link" time="0.189" /><testcase classname="tests.test_iteration14.TestTopology" name="test_topology_shows_link" time="0.062" /><testcase classname="tests.test_iteration14.TestTopology" name="test_delete_link" time="0.124" /><testcase classname="tests.test_iteration14.TestCron" name="test_cron_no_token_401" time="0.143" /><testcase classname="tests.test_iteration14.TestCron" name="test_cron_bad_token_401" time="0.108" /><testcase classname="tests.test_iteration14.TestCron" name="test_cron_scan_ok_and_run_recorded" time="41.369"><failure message="AssertionError: cron run iter14-d173d7c8 did not finish&#10;assert None">self = &lt;test_iteration14.TestCron object at 0xfef3286da8d0&gt;
+sess = &lt;requests.sessions.Session object at 0xfef3286d9950&gt;
+
+    def test_cron_scan_ok_and_run_recorded(self, sess):
+        wid = f"iter14-{uuid.uuid4().hex[:8]}"
+        r = requests.post(f"{BASE}/api/cron/monitor-scan", json={},
+                          headers={"Authorization": f"Bearer {CRON}", "X-Webhook-Id": wid}, timeout=15)
+        assert r.status_code in (200, 202), r.text
+        # Poll cron runs
+        finished = None
+        for _ in range(20):
+            time.sleep(2)
+            runs = sess.get(f"{BASE}/api/cron/runs", timeout=15).json()
+            row = next((x for x in runs.get("items", []) if x.get("webhook_id") == wid), None)
+            if row and row.get("status") in ("ok", "error"):
+                finished = row; break
+&gt;       assert finished, f"cron run {wid} did not finish"
+E       AssertionError: cron run iter14-d173d7c8 did not finish
+E       assert None
+
+tests/test_iteration14.py:220: AssertionError</failure></testcase><testcase classname="tests.test_iteration14.TestRetentionIndex" name="test_ttl_index_present_and_purge" time="0.338" /><testcase classname="tests.test_iteration14.TestPublicDisplay" name="test_public_topology" time="0.065"><failure message="assert None">self = &lt;test_iteration14.TestPublicDisplay object at 0xfef3286d9f50&gt;
+sess = &lt;requests.sessions.Session object at 0xfef3286d9950&gt;
+
+    def test_public_topology(self, sess):
+        # Enable display
+        r = sess.put(f"{BASE}/api/workspaces/{WS}/public-display",
+                     json={"enabled": True, "show_ips": False, "title": "iter14", "rotate": False}, timeout=15)
+        assert r.status_code == 200
+        token = r.json().get("token") or r.json().get("public_display", {}).get("token")
+&gt;       assert token
+E       assert None
+
+tests/test_iteration14.py:263: AssertionError</failure></testcase></testsuite></testsuites>

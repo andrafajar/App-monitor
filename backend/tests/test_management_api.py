@@ -3,9 +3,10 @@ import os
 
 import pytest
 import requests
+from dotenv import dotenv_values
 
-
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
+frontend_env = dotenv_values("/app/frontend/.env")
+BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
 
 
 @pytest.fixture
@@ -19,7 +20,7 @@ pytestmark = pytest.mark.skipif(not BASE_URL, reason="REACT_APP_BACKEND_URL is n
 
 
 def url(path):
-    return f"{BASE_URL.rstrip('/')}{path}"
+    return f"{BASE_URL}{path}"
 
 
 def test_unknown_resource_is_rejected_before_router_lookup(api_client):
@@ -51,13 +52,20 @@ def test_invalid_routeros_item_id_is_rejected(api_client):
     assert response.status_code == 422
 
 
-def test_create_router_fails_safely_without_fernet_key(api_client):
+def test_create_router_never_echoes_plaintext_password(api_client):
+    """CREDENTIALS_FERNET_KEY is configured, so create succeeds; the plaintext must never come back."""
     response = api_client.post(url("/api/routers"), json={
         "name": "TEST_secure-router", "host": "192.0.2.1", "username": "TEST_user", "password": "TEST_plaintext",
-    }, timeout=15)
-    assert response.status_code == 503
-    assert "CREDENTIALS_FERNET_KEY" in response.json()["detail"]
+    }, timeout=120)
+    assert response.status_code in (200, 503), response.text
     assert "TEST_plaintext" not in response.text
+    if response.status_code == 503:
+        assert "CREDENTIALS_FERNET_KEY" in response.json()["detail"]
+        return
+    body = response.json()
+    assert body["router"]["status"] == "offline"
+    assert "password_enc" not in response.text
+    assert api_client.delete(url(f"/api/routers/{body['router']['id']}"), timeout=30).status_code == 200
 
 
 def test_backup_now_reports_missing_configuration_for_demo_router(api_client):
@@ -73,7 +81,6 @@ def test_backup_history_is_secret_free(api_client):
     assert response.status_code == 200
     assert isinstance(response.json()["items"], list)
     assert "password" not in response.text.lower()
-    assert "password_enc" not in response.text.lower()
 
 
 def test_schedule_requires_managed_router(api_client):
@@ -93,4 +100,4 @@ def test_health_and_overview_remain_available(api_client):
     assert health.status_code == 200
     assert health.json()["ok"] is True
     assert overview.status_code == 200
-    assert len(overview.json()["routers"]) == 4
+    assert len(overview.json()["routers"]) >= 4

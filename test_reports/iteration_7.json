@@ -1,0 +1,87 @@
+{
+  "summary": "Iteration 7: full retest of the new Add Router / Refresh / Delete-router functionality plus regression of all previous suites. Backend: 58 tests run (57 pass, 1 fail) across router inventory CRUD, overview merge, validation, read-only RouterOS resources and Telegram notifications. Frontend: 17-step Playwright E2E on the public URL covering modal open/validation/submit/cancel, metric increment, fleet-table insertion, toast auto-dismiss, refresh refetch, managed-vs-demo remove button, test-connection API call, all 6 drawer tabs and all 6 nav views — every one of the requested acceptance criteria PASSED. One CRITICAL backend defect found: the RouterOS client is invoked with an unsupported kwarg so NO live RouterOS read can ever succeed for a managed router.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/routers/{id}/resources/* and POST /api/routers/{id}/actions/*",
+        "issue": "ros_call() passes socket_timeout=10 to routeros_api.RouterOsApiPool(), but RouterOS-api 0.21.0 signature is (host, username, password, port, plaintext_login, use_ssl, ssl_verify, ssl_verify_hostname, ssl_context) — no socket_timeout. Every call fails instantly with TypeError: \"RouterOS read failed: RouterOsApiPool.__init__() got an unexpected keyword argument 'socket_timeout'\" -> HTTP 502. No connection is ever attempted, so 'Test connection' and all live drawer tabs (Logs/PPP Profiles/PPP Secrets/System Time) are permanently broken for managed routers. Fix: drop the kwarg and set the timeout via socket.setdefaulttimeout()/pool.socket_timeout attribute instead (a timeout is still required, otherwise a dead host will hang the worker thread).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/routers/{id}/resources/*",
+        "issue": "RouterOS failures are returned as HTTP 502. The k8s/Cloudflare ingress replaces any 502 body with its own HTML error page, so the sanitized `detail` never reaches the browser — the UI literally renders 'The origin web server returned an invalid or incomplete response to Cloudflare...'. Use a non-502 status (e.g. 424/409/200-with-error-field) so err.response.data.detail survives."
+      },
+      {
+        "endpoint": "GET /api/monitoring/overview",
+        "issue": "create_router() always stores status='pending', so the row.setdefault('status','managed') branch in overview() is dead code, and the frontend Status map has no 'pending' entry -> newly added routers render as red 'Offline'."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Status / router fleet row",
+        "issue": "Backend returns status='pending' for a newly onboarded router but Status() only maps online/warning/offline, defaulting to red 'Offline'. A router that was just added and never tested is shown as Offline, which is misleading. Add a 'pending' state (grey/amber 'Pending').",
+        "selector": "[data-testid^=\"router-row-mr-\"] .status",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "AddRouterModal group select",
+        "issue": "Group dropdown is limited to existing groups (from overview). Backend accepts any group string, so there is no way to onboard a router into a brand-new group from the UI. Consider a free-text/creatable option.",
+        "selector": "[data-testid=\"add-router-group\"]",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Test connection / live RouterOS tabs on a managed router",
+        "issue": "Request is correctly fired to /api/routers/{id}/resources/interfaces (fix verified), but the backend 502 (see critical issue) surfaces to the user as the Cloudflare origin-error HTML text inside the toast and the drawer error panel.",
+        "affected_selectors": ["[data-testid=\"test-router-connection\"]", "[data-testid=\"notification-toast\"]", "[data-testid=\"system-clock-error\"]"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Settings › notifications panel",
+        "issues": ["'Deliver alarms' label sits flush against/overlapping its checkbox (no gap) in the .tg-toggle row at 1920px"]
+      },
+      {
+        "screen": "Overview with drawer open",
+        "issues": ["Long toast text is clipped by the drawer overlay (toast is centered under the header and slides beneath the 400px drawer)"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_router_inventory.py",
+    "/app/backend/tests/test_readonly_resources.py",
+    "/app/backend/tests/test_telegram_notifications.py",
+    "/app/backend/tests/test_management_api.py",
+    "/app/backend/tests/test_monitoring_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: remove the invalid socket_timeout kwarg from routeros_api.RouterOsApiPool() in ros_call() and apply a socket timeout the supported way — currently 100% of live RouterOS reads/actions fail",
+    "Stop returning 502 for RouterOS failures (ingress swallows the JSON body); use 424/409 or 200+error so the sanitized detail reaches the UI",
+    "Add a 'pending' status style so freshly onboarded routers do not render as 'Offline'",
+    "Add gap/spacing between the 'Deliver alarms' checkbox and its label in .tg-toggle"
+  ],
+  "critical_code_review_comments": [
+    "ros_call(): kwargs are not validated against the installed RouterOS-api version — pin the library in requirements.txt and add a unit-level smoke test for the pool constructor signature.",
+    "overview(): row.setdefault('status','managed') is unreachable because create_router() always writes status='pending'.",
+    "/app/frontend/src/App.js is a single 354-line file with several 400+ char JSX lines (topbar/page-heading/fleet table). Split into components (Sidebar, Topbar, FleetTable, RouterDrawer) for maintainability.",
+    "GET /api/routers and /api/monitoring/overview use .to_list(500) with no pagination — will silently truncate at 500 managed routers.",
+    "DELETE /api/routers/{id} does not cascade-delete backup_schedules/backup_history/audit_log rows for the removed router, leaving orphaned documents."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_router_inventory.py",
+    "/app/backend/tests/test_readonly_resources.py",
+    "/app/backend/tests/test_telegram_notifications.py"
+  ],
+  "success_rate": {"backend": "98% (57/58)", "frontend": "100% of the 17 requested acceptance checks passed"},
+  "seed_data_creation": "Created and then deleted TEST_Pytest Router / TEST_New Group Router / TEST_Delete Me / TEST_Unreachable / TEST_Playwright and Telegram group TEST_SendGroup. Managed inventory left with only the pre-existing user record mr-65920574 'IDC MONITORING' (not created by me, left untouched).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All Add Router / Refresh / Delete / toast-auto-dismiss acceptance criteria from iteration 7 are verified working end-to-end via the public URL; no need to retest them unless code changes. The only open blocker is the RouterOS socket_timeout kwarg bug — after the fix, re-run /app/backend/tests/test_router_inventory.py::TestRouterValidation::test_managed_router_resource_read_fails_gracefully which asserts (a) status 502 is NOT used with an HTML-masked body and (b) the detail contains no 'unexpected keyword argument'. Note pytest.ini runs xdist loadscope, so any cross-class shared state is racy — keep each test class self-sufficient. Two previously-passing assertions (len(routers)==4 in test_readonly_resources.py and test_telegram_notifications.py) were relaxed to >=4 because overview now merges managed routers; test_readonly_resources.py::test_create_router_requires_fernet_key now cleans up after itself.",
+  "rca_of_the_issue": "RouterOS-api 0.21.0's RouterOsApiPool.__init__ accepts no socket_timeout parameter (verified with inspect.signature). server.py:63 passes socket_timeout=10, so a TypeError is raised before any TCP connect; the broad except in read_resource converts it into HTTP 502 'RouterOS read failed: ... unexpected keyword argument socket_timeout'. Reproduce: POST /api/routers with any host, then GET /api/routers/{id}/resources/interfaces -> 502 in ~0.2s (too fast for a real connect attempt). Mitigation: remove the kwarg; set the timeout with socket.setdefaulttimeout() around the call or via the pool's socket_timeout attribute after construction."
+}

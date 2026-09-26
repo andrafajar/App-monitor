@@ -1,0 +1,39 @@
+{
+  "summary": "Verified the sidebar routing bug fix and the new Telegram delivery feature end-to-end. Backend: added /app/backend/tests/test_telegram_notifications.py (21 cases) — all pass; full suite 43 passed / 13 skipped (skips are pre-existing managed-router tests). Frontend: all 6 sidebar nav items now render distinct views with correct H1 + crumb + unique testids and NO toast on nav; refresh button still toasts. Settings › Notifications panel loads with no JS runtime error and full save → send test → remove flow works with masked tokens.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Toast (notification-toast)", "issues": ["Toast never auto-dismisses and has no close button — it stays pinned top-right across view changes (e.g. 'Head Office: Telegram config removed' still visible minutes later). Consider a 3-4s auto-hide."]},
+      {"screen": "Settings › Telegram row", "issues": ["'Deliver alarms' label text abuts the checkbox with no gap (tg-toggle span needs margin/gap).", "After Remove, the Chat ID input keeps the previously typed value while the pill says 'Not configured' — local state is not reset on delete (cosmetic/confusing)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_telegram_notifications.py",
+    "/app/backend/tests/test_readonly_resources.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional UX: auto-dismiss the toast after a few seconds (currently persists indefinitely).",
+    "Optional UX: allow updating only chat_id / enabled for an already-configured group without re-pasting the bot token (current code forces a token re-paste; the inline comment in GroupTelegramRow acknowledges this). Would need a PATCH-style endpoint or optional bot_token in TelegramConfigIn.",
+    "Optional: reset chat_id/enabled local state after a successful Remove."
+  ],
+  "critical_code_review_comments": [
+    "/app/frontend/src/App.js is a single 292-line file but with extremely long single lines (line 263/266-273 each exceed 1000 chars) — split view sections (OverviewView, RoutersView, GroupsView, AlarmsView, AuditView) into modules for maintainability.",
+    "telegram_send() forwards Telegram's HTTP status verbatim; a Telegram 401 surfaces as a 401 from our API, which a browser/proxy may interpret as an auth challenge. Consider mapping upstream 4xx to 502/424 with the description in the body.",
+    "credential_box() raises HTTPException(503) at call time; a startup check for CREDENTIALS_FERNET_KEY would fail fast instead of per-request.",
+    "No rate limiting on POST /notifications/telegram/{group}/test — it makes an outbound HTTP call per request."
+  ],
+  "updated_files": ["/app/backend/tests/test_telegram_notifications.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created and then deleted telegram_configs docs for 'Head Office' and 'TEST_DisabledGroup' with fake token 1234567890:AAABBBCCCdddEEEfff-gg_hh. DB verified empty ({items:[]}) after tests.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "None required — app is unauthenticated. No real Telegram bot token available; fake token used, Telegram correctly returns 'Unauthorized'.",
+  "context_for_next_testing_agent": "Routing fix confirmed: App() switches on `active`; nav testids are nav-overview, nav-routers, nav-groups-&-tenants, nav-alarms, nav-audit-log, nav-settings; unique view testids groups-view/alarms-view/audit-view/notifications-panel; Overview = traffic chart + fleet + management strip, Routers = metrics + fleet only. Telegram row testids use the RAW group name (tg-token-Head Office) while tg-row uses a slug (tg-row-head-office). Backend regression suites: test_telegram_notifications.py (21), test_readonly_resources.py (22 pass), test_management_api.py/test_monitoring_api.py (13 skips — need a managed router with live RouterOS credentials). Verified token never leaves the server in plaintext: PUT/GET/test/DELETE responses and the rendered DOM contain only the 12345••••g_hh hint. Untested (blocked): a real Telegram bot token success path (message_id) and /api/alarms/dispatch happy path + alarm_log persistence.",
+  "rca_of_the_issue": "Original bug: sidebar show() only fired a toast and never gated content rendering, so every view looked like the dashboard. Fixed — show() now only sets `active` and each content section is conditionally rendered on `active`. Verified all six items render distinct content and produce no toast."
+}

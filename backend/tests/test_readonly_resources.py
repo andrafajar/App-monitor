@@ -32,9 +32,10 @@ def test_overview(api):
     r = api.get(f"{BASE_URL}/api/monitoring/overview", timeout=30)
     assert r.status_code == 200
     d = r.json()
-    assert len(d["routers"]) == 4
-    assert d["routers"][0]["id"] == "r-01"
-    assert len(d["groups"]) == 5
+    # demo routers come first; managed routers are appended after them
+    assert len(d["routers"]) >= 4
+    assert [x["id"] for x in d["routers"][:4]] == ["r-01", "r-02", "r-03", "r-04"]
+    assert len(d["groups"]) >= 5 and d["groups"][0] == "All routers"
     assert len(d["traffic"]) == 12
     # ensure no credential leakage in demo payload
     assert all("password" not in k for row in d["routers"] for k in row)
@@ -122,3 +123,7 @@ def test_create_router_requires_fernet_key(api):
     assert r.status_code in (200, 503), r.text
     if r.status_code == 503:
         assert "CREDENTIALS_FERNET_KEY" in r.json()["detail"]
+    else:
+        # do not leak test data into the managed inventory
+        rid = r.json()["router"]["id"]
+        assert api.delete(f"{BASE_URL}/api/routers/{rid}", timeout=30).status_code == 200

@@ -1,0 +1,56 @@
+{
+  "summary": "Iteration 8 verification of the RouterOS socket_timeout fix + probe-on-create + test-connection + probe-all. Backend: 76/76 pytest tests pass (router inventory CRUD, probe-on-create, test-connection, probe-all, 424 error contract, read-only RouterOS resources, Telegram, management boundaries, monitoring). Live proof the critical bug is gone: GET /api/routers/mr-65920574/resources/system-clock on the user's real router returns real RouterOS data in 2.5s and the router probes status='online' cpu=4 uptime=15w3d6h version='7.22.3 (stable)'. Frontend: full Playwright E2E on the public URL — add unreachable router -> red 'Offline' badge (no JS error), refresh fires BOTH POST /monitoring/probe-all and GET /monitoring/overview, offline test-connection toast shows 'is unreachable: timed out', real-router test-connection toast shows 'IDC MONITORING is ONLINE · CPU 4% · uptime ...', all 6 drawer tabs render live/error states with the sanitized 424 detail ('RouterOS read failed: timed out') instead of the Cloudflare HTML, PPP secrets masked by default and revealed on toggle, all 6 nav views route correctly, DELETE removes the row. No page errors. DB left with exactly the 1 pre-existing managed router.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "probe_router() / GET /api/monitoring/overview", "issue": "probe only stores cpu/uptime/version. memory (free-memory/total-memory from /system/resource) is never computed, so managed rows always show memory 0 and the fleet table/drawer render 'Memory 0%' / '—' even for an ONLINE router. Also 'traffic' and 'interfaces' stay at the placeholder defaults."},
+      {"endpoint": "POST /api/routers", "issue": "Create is synchronous with the probe: onboarding an unreachable host blocks the HTTP request for the full 6s socket timeout (observed ~7s). Acceptable now, but consider probing in the background and returning 'pending' immediately."},
+      {"endpoint": "POST /api/monitoring/probe-all", "issue": "No cap on concurrency and no per-router timeout budget; with N unreachable routers the endpoint holds N worker threads for 6s each (asyncio.to_thread default executor is 32 threads) — will throttle/queue at scale."},
+      {"endpoint": "DELETE /api/routers/{id}", "issue": "Still does not cascade-delete backup_schedules/backup_history/audit_log rows (carried over from iteration 7)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ResourceTable (drawer live tabs)", "issue": "Each tab issues the RouterOS fetch twice (2x HTTP 424 observed for /resources/logs on one tab open) and the in-flight request is not aborted (only a 'cancelled' flag), so on an unreachable router the loading spinner stays up ~16s before the error appears. Use an AbortController and dedupe the effect.", "selector": "[data-testid=\"logs-loading\"]", "priority": "MEDIUM"},
+      {"component": "Router drawer stats", "issue": "Drawer shows 'Memory 0%' for the real ONLINE router (backend never populates memory) — reads as a fault rather than 'not collected'. Show '—' when memory is unavailable.", "selector": "[data-testid=\"router-details-drawer\"] .drawer-stats", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings › notifications panel", "issues": ["'Deliver alarms' label still sits flush against its checkbox in .tg-toggle (unfixed from iteration 7)"]},
+      {"screen": "Router fleet table", "issues": ["Managed rows show '—' for TRAFFIC and empty MEMORY bar, leaving visually empty columns next to fully-populated demo rows"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_router_inventory.py",
+    "/app/backend/tests/test_monitoring_api.py",
+    "/app/backend/tests/test_management_api.py",
+    "/app/backend/tests/test_readonly_resources.py",
+    "/app/backend/tests/test_telegram_notifications.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Populate memory (and optionally interface count) in probe_router() from /system/resource so ONLINE routers do not display 0% memory",
+    "Add AbortController + single-fetch guard in ResourceTable so a tab open does not fire the RouterOS read twice (16s spinner on unreachable hosts)",
+    "Add spacing between the 'Deliver alarms' checkbox and its label (.tg-toggle) — still open from iteration 7",
+    "Optional: make create_router probe asynchronously (return 'pending', probe in background) to avoid a 6-7s blocking POST"
+  ],
+  "critical_code_review_comments": [
+    "Verified routeros_api 0.21.0: RouterOsApiPool has no socket_timeout ctor arg but api.py line 48 uses self.socket_timeout at connect time, so the new `pool.socket_timeout = timeout` assignment is the correct fix (real 'timed out' errors now observed instead of TypeError).",
+    "probe_router() is defined before sanitize_error() in server.py — works only because resolution is at call time; move helpers above their users for readability.",
+    "server.py is 275 lines but extremely dense (multi-statement lines, 400+ char JSX-like one-liners in App.js at 369 lines); split App.js into Sidebar/Topbar/FleetTable/RouterDrawer components.",
+    "probe-all writes probe results with update_one per router and no error field persisted — the last failure reason is discarded, so the UI can never explain why a router is offline after a refresh (only right after test-connection).",
+    "GET /api/routers and /api/monitoring/overview still use .to_list(500) with no pagination."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_router_inventory.py",
+    "/app/backend/tests/test_monitoring_api.py",
+    "/app/backend/tests/test_management_api.py"
+  ],
+  "success_rate": {"backend": "100% (76/76)", "frontend": "100% of the 12 requested acceptance checks passed"},
+  "seed_data_creation": "Created and deleted TEST_Pytest Router, TEST_New Group Router, TEST_Delete Me, TEST_TestConn, TEST_ProbeAll, TEST_Unreachable, TEST_secure-router (all host 192.0.2.99) and Playwright routers TEST_Playwright Offline / TEST_PW2 Offline. Telegram test group created+deleted. Final state verified: /api/routers returns exactly 1 item (mr-65920574 'IDC MONITORING', untouched, still online) and /api/notifications/telegram is empty.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "/app/memory/test_credentials.md is a template with no credentials; app has no auth so none were needed",
+  "context_for_next_testing_agent": "All iteration-8 acceptance criteria PASS. Backend suite is now 76 tests and green; test_monitoring_api.py and test_management_api.py were previously silently SKIPPED (they read REACT_APP_BACKEND_URL from os.environ only) — fixed to read /app/frontend/.env, and their stale assertions (routers==4, create-router-503-without-Fernet) were updated. test_router_inventory.py now asserts 424 (not 502) for RouterOS failures, status='offline' after probe-on-create, and covers /test-connection (200/404) and /monitoring/probe-all shape+no-leak. Use host 192.0.2.99 for offline paths; the real router mr-65920574 must remain in the DB. Remaining open items are all cosmetic/perf (memory not probed, double fetch in ResourceTable, tg-toggle spacing).",
+  "rca_of_the_issue": "Iteration 7's blocker (TypeError: RouterOsApiPool.__init__ got an unexpected keyword argument 'socket_timeout') is resolved: the kwarg was removed and the timeout is now set via the pool's socket_timeout attribute, which routeros_api/api.py passes to the socket at connect time. Confirmed by (a) real RouterOS payloads returned from the user's device (system-clock, ppp-secrets, ppp-profiles, logs) and (b) unreachable hosts now failing with a genuine 'timed out' after the timeout window instead of instantly. The 502->424 change also means the sanitized detail survives the ingress and is rendered in the drawer error panel."
+}

@@ -52,6 +52,9 @@ class TelegramConfigIn(BaseModel):
     bot_token: str = Field(min_length=20, max_length=200, pattern=r"^\d+:[A-Za-z0-9_\-]+$")
     chat_id: str = Field(min_length=1, max_length=40, pattern=r"^-?\d+$")
     enabled: bool = True
+class RouterUpdate(BaseModel):
+    name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str
+    password: str | None = None; group: str = "Unassigned"; description: str = Field(default="", max_length=200)
 class GroupCreate(BaseModel):
     name: str = Field(min_length=2, max_length=60)
 class AlarmDispatch(BaseModel):
@@ -126,7 +129,7 @@ def probe_router(router: dict) -> dict[str, Any]:
     except Exception as exc:
         return {"status": "offline", "error": sanitize_error(exc, router)}
 
-MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "group", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "last_probed_at")
+MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "username", "group", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "last_probed_at", "updated_at")
 
 def sanitize_router(doc: dict) -> dict:
     return {k: doc[k] for k in MANAGED_PUBLIC_FIELDS if k in doc}
@@ -222,6 +225,21 @@ async def connection_state(router_id: str):
     with _ROS_LOCK: entry = _ROS_POOLS.get(router_id)
     if not entry: return {"connected": False}
     return {"connected": True, "connected_at": entry["connected_at"], "last_used": entry["last_used"]}
+
+@api.put("/routers/{router_id}")
+async def update_router(router_id: str, item: RouterUpdate):
+    await router_doc(router_id)
+    update = item.model_dump(); password = update.pop("password")
+    update["name"] = update["name"].strip(); update["host"] = update["host"].strip(); update["username"] = update["username"].strip()
+    if password: update["password_enc"] = credential_box().encrypt(password.encode()).decode()
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.routers.update_one({"id": router_id}, {"$set": update})
+    await asyncio.to_thread(_drop_pool, router_id)
+    doc = await router_doc(router_id)
+    probe = await asyncio.to_thread(probe_router, doc)
+    doc.update({k: v for k, v in probe.items() if k != "error"}); doc["last_probed_at"] = datetime.now(timezone.utc).isoformat()
+    await db.routers.update_one({"id": router_id}, {"$set": {k: doc[k] for k in ("status", "cpu", "memory", "uptime", "version", "last_probed_at") if k in doc}})
+    return {"ok": True, "message": "Router updated", "router": sanitize_router(doc), "probe": {"status": probe.get("status"), "error": probe.get("error")}}
 
 @api.delete("/routers/{router_id}")
 async def delete_router(router_id: str):

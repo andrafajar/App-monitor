@@ -3,7 +3,7 @@ import axios from "axios";
 import {
   Activity, AlertTriangle, Bell, Check, ChevronDown, ChevronLeft, ChevronRight, CircleGauge,
   Clock, Cpu, Database, Ellipsis, ExternalLink, Eye, EyeOff, KeyRound, LayoutDashboard,
-  Loader2, Menu, Network, Plus, Power, RefreshCw, Router, Save, Search, Send, Settings2,
+  Loader2, Menu, Network, Pencil, Plus, Power, RefreshCw, Router, Save, Search, Send, Settings2,
   ShieldCheck, SlidersHorizontal, Terminal, Trash2, Users, Wifi, X
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -254,29 +254,40 @@ function NotificationsPanel({ groups, onNotice }) {
   </section>;
 }
 
-function AddRouterModal({ open, onClose, groups, onCreated, onNotice }) {
-  const [form, setForm] = useState({ name: "", host: "", port: "8728", username: "", password: "", group: groups?.[1] || "Unassigned" });
+function AddRouterModal({ open, onClose, groups, onCreated, onNotice, editing }) {
+  const blank = { name: "", host: "", port: "8728", username: "", password: "", group: groups?.[1] || "Unassigned", description: "" };
+  const fromRouter = (r) => ({ name: r.name || "", host: r.host || "", port: String(r.port || 8728), username: r.username || "", password: "", group: r.group || "Unassigned", description: r.description || "" });
+  const [form, setForm] = useState(blank);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) setForm({ name: "", host: "", port: "8728", username: "", password: "", group: groups?.[1] || "Unassigned" }); }, [open, groups]);
+  useEffect(() => { if (open) setForm(editing ? fromRouter(editing) : blank); }, [open, groups, editing]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);
     try {
-      const body = { name: form.name.trim(), host: form.host.trim(), port: parseInt(form.port, 10) || 8728, username: form.username.trim(), password: form.password, group: form.group };
+      const body = { name: form.name.trim(), host: form.host.trim(), port: parseInt(form.port, 10) || 8728, username: form.username.trim(), group: form.group, description: form.description.trim() };
+      if (editing) {
+        if (form.password) body.password = form.password;
+        const r = await axios.put(`${API}/routers/${editing.id}`, body);
+        onNotice(`${r.data?.router?.name || "Router"} updated · ${r.data?.probe?.status === "online" ? "connection OK" : "unreachable with new settings"}`);
+        onCreated(r.data?.router); onClose();
+        return;
+      }
+      body.password = form.password;
       const r = await axios.post(`${API}/routers`, body);
       onNotice(`${r.data?.router?.name || "Router"} onboarded — connection test queued`);
       onCreated(); onClose();
     } catch (err) {
       const detail = err.response?.data?.detail;
-      onNotice(typeof detail === "string" ? detail : "Add router failed — check the fields and try again");
+      onNotice(typeof detail === "string" ? detail : `${editing ? "Update" : "Add"} router failed — check the fields and try again`);
     } finally { setBusy(false); }
   };
   return <div className="modal-backdrop" onClick={onClose} data-testid="add-router-backdrop">
-    <div className="modal" onClick={e => e.stopPropagation()} data-testid="add-router-modal">
-      <div className="drawer-head"><div><p className="eyebrow">ONBOARDING</p><h2>Add MikroTik router</h2><span className="muted">Credentials are AES-encrypted server-side and never returned to the browser.</span></div><button className="icon-btn" onClick={onClose} data-testid="close-add-router"><X size={18} /></button></div>
+    <div className="modal" onClick={e => e.stopPropagation()} data-testid={editing ? "edit-router-modal" : "add-router-modal"}>
+      <div className="drawer-head"><div><p className="eyebrow">{editing ? `EDIT · ${editing.id}` : "ONBOARDING"}</p><h2>{editing ? "Edit router" : "Add MikroTik router"}</h2><span className="muted">Credentials are AES-encrypted server-side and never returned to the browser.</span></div><button className="icon-btn" onClick={onClose} data-testid="close-add-router"><X size={18} /></button></div>
       <form onSubmit={submit} className="add-form">
         <label>Display name<input required minLength={2} value={form.name} onChange={e => set("name", e.target.value)} placeholder="HQ Core Router" data-testid="add-router-name" /></label>
+        <label>Description<input maxLength={200} value={form.description} onChange={e => set("description", e.target.value)} placeholder="Core router at IDC rack 3 (optional)" data-testid="add-router-description" /></label>
         <label>Host / IP<input required value={form.host} onChange={e => set("host", e.target.value)} placeholder="10.10.0.1" data-testid="add-router-host" /></label>
         <div className="two-col">
           <label>API port
@@ -292,10 +303,10 @@ function AddRouterModal({ open, onClose, groups, onCreated, onNotice }) {
           </label>
         </div>
         <label>Username<input required value={form.username} onChange={e => set("username", e.target.value)} placeholder="admin" autoComplete="off" data-testid="add-router-username" /></label>
-        <label>Password<input type="password" required value={form.password} onChange={e => set("password", e.target.value)} placeholder="Router API password" autoComplete="new-password" data-testid="add-router-password" /></label>
+        <label>Password<input type="password" required={!editing} value={form.password} onChange={e => set("password", e.target.value)} placeholder={editing ? "Leave blank to keep current password" : "Router API password"} autoComplete="new-password" data-testid="add-router-password" /></label>
         <div className="modal-actions">
           <button type="button" className="button secondary" onClick={onClose} data-testid="add-router-cancel">Cancel</button>
-          <button type="submit" className="button primary" disabled={busy} data-testid="add-router-submit"><Plus size={14} />{busy ? "Saving..." : "Save router"}</button>
+          <button type="submit" className="button primary" disabled={busy} data-testid="add-router-submit">{editing ? <Save size={14} /> : <Plus size={14} />}{busy ? "Saving..." : editing ? "Save changes" : "Save router"}</button>
         </div>
       </form>
     </div>
@@ -331,7 +342,7 @@ function AddGroupModal({ open, onClose, onCreated, onNotice }) {
   </div>;
 }
 
-function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove }) {
+function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, onEdit }) {
   const [cat, setCat] = useState("Interfaces");
   const [revealSecret, setRevealSecret] = useState(false);
   const [conn, setConn] = useState({ connected: false, connected_at: 0 });
@@ -367,7 +378,7 @@ function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove }) {
         <div className={`router-icon ${router.color || "cyan"}`}><Router size={17} /></div>
         <div className="ws-title-text">
           <b data-testid="ws-router-name">{router.name}</b>
-          <span className="mono">{router.host} · {router.port || 8728} · ROS {router.version || "—"}</span>
+          <span className="mono">{router.host} · {router.port || 8728} · ROS {router.version || "—"}{router.description ? ` · ${router.description}` : ""}</span>
         </div>
         <Status value={router.status} />
       </div>
@@ -376,6 +387,7 @@ function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove }) {
         <button className="button secondary compact" onClick={test} disabled={busy === "test"} data-testid="ws-test-connection"><RefreshCw size={13} className={busy === "test" ? "spin" : ""} />Test</button>
         <button className="button secondary compact" onClick={disconnect} disabled={busy === "disc" || !conn.connected} data-testid="ws-disconnect"><Power size={13} />Disconnect</button>
         <button className="button secondary compact" onClick={openTab} data-testid="ws-open-new-tab"><ExternalLink size={13} />New tab</button>
+        {router.id?.startsWith("mr-") && onEdit && <button className="button secondary compact" onClick={() => onEdit(router)} data-testid="ws-edit-router"><Pencil size={13} />Edit</button>}
         {router.id?.startsWith("mr-") && onRemove && <button className="button secondary compact tg-del" onClick={() => onRemove(router.id, router.name)} data-testid="ws-remove-router"><Trash2 size={13} />Remove</button>}
       </div>
     </header>
@@ -409,6 +421,8 @@ function App() {
   const [backupBusy, setBackupBusy] = useState(false);
   const [revealSecret, setRevealSecret] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const openEdit = (r) => { setEditing(r); setAddOpen(true); };
   const [addGroupOpen, setAddGroupOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -498,19 +512,19 @@ function App() {
       <section className="content">
         {active !== "Workspace" && <div className="page-heading"><div><p className="eyebrow">CENTRAL MONITORING / {new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }).toUpperCase()}</p><h1>{active === "Overview" ? "Network overview" : active}</h1><p className="subheading">{ {"Overview":"A real-time view of your MikroTik infrastructure and active signals.","Routers":"Managed device inventory across all groups.","Groups & Tenants":"Logical folders that scope access, backups, and alarms.","Alarms":"Threshold breaches and recovery events from every router.","Audit log":"Every action taken on this control plane.","Settings":"Configure notification channels, backups, and workspace preferences."}[active] || ""}</p></div><div className="heading-actions">{headingActions[active] || null}</div></div>}
         {notice && <div className="toast" data-testid="notification-toast"><Activity size={16} />{notice}</div>}
-        {active === "Workspace" && selected && <WorkspacePage router={selected} onBack={closeWorkspace} onNotice={setNotice} onRefresh={loadOverview} onRemove={(id, name) => { removeRouter(id, name); closeWorkspace(); }} />}
+        {active === "Workspace" && selected && <WorkspacePage router={selected} onBack={closeWorkspace} onNotice={setNotice} onRefresh={loadOverview} onEdit={openEdit} onRemove={(id, name) => { removeRouter(id, name); closeWorkspace(); }} />}
         {active === "Settings" && <NotificationsPanel groups={data.groups} onNotice={setNotice} />}
         {active === "Groups & Tenants" && <section className="panel routers-panel" data-testid="groups-view"><div className="panel-head table-head"><div><p className="eyebrow">DEVICE GROUPS / {data.groups.length - 1} GROUPS</p><h2>Groups & tenants</h2></div></div><div className="table-wrap"><table><thead><tr><th>GROUP</th><th>ROUTERS</th><th>TELEGRAM</th><th></th></tr></thead><tbody>{data.groups.slice(1).map(g => { const count = data.routers.filter(r => r.group === g).length; return <tr key={g} data-testid={`groups-row-${g.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`} onClick={() => { setGroup(g); show("Routers"); }}><td><div className="router-name"><div className="router-icon cyan"><Users size={15} /></div><div><b>{g}</b><span>{count} device{count !== 1 ? "s" : ""}</span></div></div></td><td className="mono">{count}</td><td><span className="muted">Configure in Settings › Notifications</span></td><td><div className="row-actions">{(data.custom_groups || []).includes(g) && count === 0 && <button className="icon-btn tg-del" onClick={(e) => { e.stopPropagation(); removeGroup(g); }} title="Remove group" data-testid={`groups-delete-${g.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`}><Trash2 size={15} /></button>}<button className="row-arrow" data-testid={`groups-open-${g.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`}><ChevronRight size={16} /></button></div></td></tr>; })}</tbody></table></div></section>}
         {active === "Alarms" && <section className="panel alarm-panel" data-testid="alarms-view"><div className="panel-head"><div><p className="eyebrow">SIGNAL CENTER / 3 ACTIVE</p><h2>Alarm feed</h2></div></div><div className="alarm-list"><div className="alarm-item danger"><div className="alarm-symbol"><AlertTriangle size={16} /></div><div><b>CPU threshold exceeded</b><span>Warehouse Gateway · 83% CPU</span><small>2 minutes ago</small></div></div><div className="alarm-item warning"><div className="alarm-symbol"><Wifi size={16} /></div><div><b>Interface status changed</b><span>East Branch · ether4 is down</span><small>18 minutes ago</small></div></div><div className="alarm-item info"><div className="alarm-symbol"><Bell size={16} /></div><div><b>Telegram notification sent</b><span>Partner · PT ABC · resolved</span><small>42 minutes ago</small></div></div></div></section>}
         {active === "Audit log" && <section className="panel" data-testid="audit-view"><div className="panel-head"><div><p className="eyebrow">SECURITY / IMMUTABLE</p><h2>Audit log</h2></div></div><div className="drawer-message"><ShieldCheck size={17} />Audit entries appear here once role-based writes are enabled. Read-only navigation is not logged.</div></section>}
         {(active === "Overview" || active === "Routers") && <><div className="metrics-grid"><Metric icon={Router} label="Total routers" value={data.routers.length} detail={`${online} online · 1 warning`} /><Metric icon={CircleGauge} label="Network health" value="94.2%" detail="↑ 2.8% from yesterday" tone="green" /><Metric icon={Activity} label="Aggregate traffic" value="2.40 Gbps" detail="Inbound across 3 routers" tone="violet" /><Metric icon={AlertTriangle} label="Active alarms" value="03" detail="2 high · 1 medium" tone="amber" /></div>
         {active === "Overview" && <div className="main-grid"><section className="panel traffic-panel"><div className="panel-head"><div><p className="eyebrow">BANDWIDTH TELEMETRY</p><h2>Aggregate traffic</h2></div><div className="periods"><button className="selected" data-testid="traffic-period-24h">24H</button><button data-testid="traffic-period-7d">7D</button><button data-testid="traffic-period-30d">30D</button></div></div><div className="chart-legend"><span><i className="legend-in" />Inbound <b>2.40 Gbps</b></span><span><i className="legend-out" />Outbound <b>1.18 Gbps</b></span></div><div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.traffic}><defs><linearGradient id="inbound" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#38bdf8" stopOpacity=".30" /><stop offset="100%" stopColor="#38bdf8" stopOpacity="0" /></linearGradient><linearGradient id="outbound" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#a78bfa" stopOpacity=".2" /><stop offset="100%" stopColor="#a78bfa" stopOpacity="0" /></linearGradient></defs><XAxis dataKey="time" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={32} /><Tooltip contentStyle={{ background: "#111827", border: "1px solid #26344b", borderRadius: 6, color: "#f8fafc" }} /><Area type="monotone" dataKey="inbound" stroke="#38bdf8" fill="url(#inbound)" strokeWidth={2} /><Area type="monotone" dataKey="outbound" stroke="#a78bfa" fill="url(#outbound)" strokeWidth={2} /></AreaChart></ResponsiveContainer></div></section><section className="panel alarm-panel"><div className="panel-head"><div><p className="eyebrow">SIGNAL CENTER</p><h2>Active alarms</h2></div><button className="text-btn" onClick={() => show("Alarms")} data-testid="view-all-alarms-button">View all <ChevronRight size={14} /></button></div><div className="alarm-list"><div className="alarm-item danger"><div className="alarm-symbol"><AlertTriangle size={16} /></div><div><b>CPU threshold exceeded</b><span>Warehouse Gateway · 83% CPU</span><small>2 minutes ago</small></div><button className="alarm-menu" data-testid="alarm-menu-cpu"><Ellipsis size={16} /></button></div><div className="alarm-item warning"><div className="alarm-symbol"><Wifi size={16} /></div><div><b>Interface status changed</b><span>East Branch · ether4 is down</span><small>18 minutes ago</small></div><button className="alarm-menu" data-testid="alarm-menu-interface"><Ellipsis size={16} /></button></div><div className="alarm-item info"><div className="alarm-symbol"><Bell size={16} /></div><div><b>Telegram notification sent</b><span>Partner · PT ABC · resolved</span><small>42 minutes ago</small></div><button className="alarm-menu" data-testid="alarm-menu-telegram"><Ellipsis size={16} /></button></div></div></section></div>}
-        <section className="panel routers-panel"><div className="panel-head table-head"><div><p className="eyebrow">INVENTORY / {data.routers.length} DEVICES</p><h2>Router fleet</h2></div><div className="table-tools"><div className="search"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter routers..." data-testid="router-search-input" /></div><select value={group} onChange={e => setGroup(e.target.value)} data-testid="router-group-filter">{data.groups.map(g => <option key={g}>{g}</option>)}</select><button className="icon-btn" data-testid="router-table-settings"><SlidersHorizontal size={16} /></button></div></div><div className="table-wrap"><table><thead><tr><th>ROUTER</th><th>GROUP</th><th>STATUS</th><th>CPU</th><th>MEMORY</th><th>TRAFFIC</th><th>UPTIME</th><th></th></tr></thead><tbody>{routers.map(r => <tr key={r.id} onClick={() => openWorkspace(r)} data-testid={`router-row-${r.id}`}><td><div className="router-name"><div className={`router-icon ${r.color}`}><Router size={15} /></div><div><b>{r.name}</b><span>{r.host} · ROS {r.version || "—"}</span></div></div></td><td><span className="group-label">{r.group}</span></td><td><Status value={r.status} /></td><td><div className="bar-value"><span>{r.cpu}%</span><i><b style={{ width: `${r.cpu}%` }} /></i></div></td><td><div className="bar-value"><span>{r.memory ? `${r.memory}%` : "—"}</span><i><b className={r.memory > 70 ? "warn" : ""} style={{ width: `${r.memory}%` }} /></i></div></td><td className="mono">{r.traffic || "—"}</td><td className="muted">{r.uptime}</td><td><button className="row-arrow" onClick={(e) => { e.stopPropagation(); openWorkspace(r); }} data-testid={`router-details-${r.id}`}><ChevronRight size={16} /></button></td></tr>)}</tbody></table>{routers.length === 0 && <div className="empty-state" data-testid="empty-router-state">No routers match this filter.</div>}</div></section>
+        <section className="panel routers-panel"><div className="panel-head table-head"><div><p className="eyebrow">INVENTORY / {data.routers.length} DEVICES</p><h2>Router fleet</h2></div><div className="table-tools"><div className="search"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter routers..." data-testid="router-search-input" /></div><select value={group} onChange={e => setGroup(e.target.value)} data-testid="router-group-filter">{data.groups.map(g => <option key={g}>{g}</option>)}</select><button className="icon-btn" data-testid="router-table-settings"><SlidersHorizontal size={16} /></button></div></div><div className="table-wrap"><table><thead><tr><th>ROUTER</th><th>GROUP</th><th>STATUS</th><th>CPU</th><th>MEMORY</th><th>TRAFFIC</th><th>UPTIME</th><th></th></tr></thead><tbody>{routers.map(r => <tr key={r.id} onClick={() => openWorkspace(r)} data-testid={`router-row-${r.id}`}><td><div className="router-name"><div className={`router-icon ${r.color}`}><Router size={15} /></div><div><b>{r.name}</b><span>{r.host} · ROS {r.version || "—"}{r.description ? ` · ${r.description}` : ""}</span></div></div></td><td><span className="group-label">{r.group}</span></td><td><Status value={r.status} /></td><td><div className="bar-value"><span>{r.cpu}%</span><i><b style={{ width: `${r.cpu}%` }} /></i></div></td><td><div className="bar-value"><span>{r.memory ? `${r.memory}%` : "—"}</span><i><b className={r.memory > 70 ? "warn" : ""} style={{ width: `${r.memory}%` }} /></i></div></td><td className="mono">{r.traffic || "—"}</td><td className="muted">{r.uptime}</td><td><div className="row-actions">{r.id?.startsWith("mr-") && <button className="icon-btn" title="Edit router" onClick={(e) => { e.stopPropagation(); openEdit(r); }} data-testid={`router-edit-${r.id}`}><Pencil size={15} /></button>}<button className="row-arrow" onClick={(e) => { e.stopPropagation(); openWorkspace(r); }} data-testid={`router-details-${r.id}`}><ChevronRight size={16} /></button></div></td></tr>)}</tbody></table>{routers.length === 0 && <div className="empty-state" data-testid="empty-router-state">No routers match this filter.</div>}</div></section>
         {active === "Overview" && <><div className="footer-note"><span><Database size={14} />Native RouterOS graph data · lightweight cache</span><span>Last sync: just now · <b>All systems operational</b></span></div>
         <div className="management-strip"><section className="panel management-panel"><div className="panel-head"><div><p className="eyebrow">NATIVE ROUTEROS API</p><h2>Direct configuration</h2></div><span className="api-lock"><ShieldCheck size={13} />Named actions only</span></div><div className="action-grid"><button onClick={() => requestResource("interfaces", "Interface list")} data-testid="api-interfaces-action"><Wifi size={15} />Interfaces</button><button onClick={() => requestResource("addresses", "IP address list")} data-testid="api-addresses-action"><Network size={15} />IP addresses</button><button onClick={() => requestResource("firewall", "Firewall filter list")} data-testid="api-firewall-action"><ShieldCheck size={15} />Firewall rules</button><button onClick={() => setNotice("Write actions require Operator or Admin confirmation")} data-testid="api-write-action"><Settings2 size={15} />Write protection</button></div></section><section className="panel management-panel"><div className="panel-head"><div><p className="eyebrow">BACKUP ENGINE</p><h2>Configuration backups</h2></div><button className="button primary compact" disabled={backupBusy} onClick={queueBackup} data-testid="backup-now-button"><Database size={14} />{backupBusy ? "Queueing..." : "Backup now"}</button></div><div className="backup-summary"><div><b>0</b><span>Stored snapshots</span></div><div><b>—</b><span>Last successful run</span></div><div><b>UTC</b><span>Schedule timezone</span></div></div><p className="backup-note" data-testid="backup-status-note">Creates encrypted <code>.backup</code> and sanitized <code>.rsc</code> files under the configured server backup path, then emails both attachments.</p></section></div></>}</>}
       </section>
     </main>
-    <AddRouterModal open={addOpen} onClose={() => setAddOpen(false)} groups={data.groups} onCreated={loadOverview} onNotice={setNotice} />
+    <AddRouterModal open={addOpen} editing={editing} onClose={() => { setAddOpen(false); setEditing(null); }} groups={data.groups} onCreated={(updated) => { if (updated && selected?.id === updated.id) setSelected(s => ({ ...s, ...updated })); loadOverview(); }} onNotice={setNotice} />
     <AddGroupModal open={addGroupOpen} onClose={() => setAddGroupOpen(false)} onCreated={loadOverview} onNotice={setNotice} />
   </div>;
 }

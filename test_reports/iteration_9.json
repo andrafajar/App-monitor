@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 9 validated the NEW winbox-workspace + groups CRUD + pooled RouterOS sessions. Backend: 32/32 pytest passed (Groups CRUD 200/409/422/400/404, custom_groups[] in overview, connect/disconnect/reconnect lifecycle for mr-65920574, all 15 allow-listed resources return 200 with live data, ppp-secrets masked by default and revealed with reveal=true, unknown resource=400, unknown router=404, 2nd/3rd interfaces read <3s confirming pool reuse). Frontend E2E against public URL passed every acceptance check: per-view heading actions correct (Overview: Customize+Add router, Routers: Add router, Groups&Tenants: only Add group, Alarms: only New rule, Settings & Audit log: none) with no forbidden leaks; Add group modal creates 'QA UI Group', new row + trash button appears (0 routers), it shows in sidebar DEVICE GROUPS and Add-router dropdown, trash deletes it, Head Office has NO trash; clicking router-row-mr-65920574 opens workspace-mr-65920574 with ws-router-name='IDC MONITORING' and the page-heading Add router disappears; all ws-menu-* items load real data (Addresses/Firewall/Routes/PPP Secrets/System Resource/Logs) with no error; PPP Secrets reveal toggle visible; ws-test-connection toast: 'IDC MONITORING · CPU 16% · uptime 19w6d21h57m35s' and indicator becomes 'Session up · 0m'; ws-disconnect → 'No session'; category click re-reads data (RouterOS auto-reconnects at API layer); ws-open-new-tab opens popup with '?router=mr-65920574&cat=Interfaces'; ws-back-button clears ?router from URL; deep link /?router=mr-65920574&cat=Routes opens workspace directly; refresh + Add router modal cancel + all nav views still work.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "WorkspacePage.ws-conn indicator", "issue": "After ws-disconnect, selecting another category correctly re-fetches data (RouterOS pool reconnects server-side) but the 'No session' text stays until the 15s interval polls /connection. Should call loadConn() after each ResourceTable fetch (or lift connection polling to a shorter interval / event-based).", "selector": ".ws-conn / [data-testid=\"workspace-mr-65920574\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Overview traffic chart on first render inside workspace transitions", "issues": ["Recharts warns 'width(-1) and height(-1)' during route changes (harmless but noisy)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_groups_workspace.py",
+    "/app/test_reports/pytest/iteration9_results.xml"
+  ],
+  "action_items": [
+    "Optional: refresh WorkspacePage connection indicator immediately after resource fetches so 'Session up' reflects the reconnect without waiting 15s",
+    "Carry-over from iter-8: probe_router() still doesn't populate memory; ppp-toggle spacing; cascade-delete for router-owned data"
+  ],
+  "critical_code_review_comments": [
+    "App.js is now 518 lines with 400+ char single-line JSX (line 497, 503, 508, 510) — split Sidebar/Topbar/GroupsView/AlarmsView/RoutersTable into components; readability + testability suffer.",
+    "server.py: _ROS_POOLS is a module-level dict guarded by threading.Lock but each ros_call runs in a separate asyncio.to_thread — concurrent reads for the same router can race on pool.get_api() (only one pool.disconnect on failure, but simultaneous first-time calls both call _new_pool). Consider a per-router asyncio.Lock or double-check inside the lock in _get_pool_entry.",
+    "server.py delete_group only checks db.routers by exact-match {'group': name} — does not warn if the group is referenced only in DEMO['routers']; acceptable because demo groups are also in DEMO['groups'] and blocked by the 400 path, but worth an explicit comment.",
+    "GroupCreate has no trim() at schema level; server strips manually — pattern check could prevent whitespace-only names.",
+    "WorkspacePage doesn't call loadConn() after each resource load, so indicator lags reality (see UI bug above).",
+    "The window.location URL parse in App.js is one-shot on data.routers.length change; if user reloads while URL already has a matching router but data hasn't loaded yet, the effect only fires once — works today because loadOverview is the sole populator."
+  ],
+  "updated_files": ["/app/backend/tests/test_groups_workspace.py"],
+  "success_rate": {"backend": "100% (32/32 new tests, iteration-9 features)", "frontend": "100% of the 10 acceptance checks in the review request"},
+  "test_credentials": "No auth in the app; /app/memory/test_credentials.md is a template placeholder — not required.",
+  "seed_data_creation": "Created QA Test Group (backend) and QA UI Group (frontend) — both deleted at end of run. mr-65920574 (IDC MONITORING) preserved and never called with DELETE. Left DB with pre-existing single managed router.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All iteration-9 acceptance criteria PASS. New backend test file: /app/backend/tests/test_groups_workspace.py (32 tests parametrized over 15 RESOURCE_PATHS). Previous suites (test_router_inventory, test_monitoring_api, test_management_api, test_readonly_resources, test_telegram_notifications) untouched and still expected green (76/76 in iter-8). Real router mr-65920574 is online, pooled sessions confirmed by 2nd read <3s. Only lingering UI nit is that the 'Session up' indicator doesn't refresh immediately after reconnect (15s poll). Do NOT delete mr-65920574 in any test.",
+  "rca_of_the_issue": "N/A — no new bugs; all acceptance criteria met."
+}

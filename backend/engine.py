@@ -349,7 +349,7 @@ async def scan_router(router: dict, settings: dict) -> list[str]:
 
 
 async def scan_alarms() -> dict:
-    routers = await db.routers.find({"password_enc": {"$exists": True}}, {"_id": 0}).to_list(500)
+    routers = await db.routers.find({"password_enc": {"$exists": True}, "device_type": {"$in": [None, "mikrotik"]}}, {"_id": 0}).to_list(500)
     cache: dict[str, dict] = {}
     checked = 0; fired: list[str] = []
     for router in routers:

@@ -53,11 +53,14 @@ async def display_board(token: str):
     devices = await db.routers.find({"workspace_id": ws["id"]}, {"_id": 0}).sort("name", 1).to_list(300)
     board = [{"id": d["id"], "name": d["name"], "status": d.get("status", "pending"), "cpu": d.get("cpu", 0), "memory": d.get("memory", 0),
               "uptime": d.get("uptime", "—"), "version": d.get("version", "—"), "group": groups.get(d.get("group_id"), d.get("group", "—")),
-              "host": d.get("host") if cfg.get("show_ips") else None, "last_probed_at": d.get("last_probed_at")} for d in devices]
+              "host": d.get("host") if cfg.get("show_ips") else None, "device_type": d.get("device_type") or "mikrotik",
+              "ping_ms": d.get("ping_ms"), "last_probed_at": d.get("last_probed_at")} for d in devices]
     series = await db.traffic_series.find({"workspace_id": ws["id"]}, {"_id": 0}).sort("ts", -1).to_list(60)
     alarms = await db.alarm_log.find({"workspace_id": ws["id"]}, {"_id": 0, "roles_notified": 0, "roles_failed": 0}).sort("created_at", -1).to_list(12)
     since = (now() - timedelta(hours=24)).isoformat()
+    from topology import topology_payload
     return {"workspace": {"id": ws["id"], "name": ws["name"], "title": cfg.get("title") or ws["name"]},
+            "topology": await topology_payload(ws["id"]),
             "devices": board,
             "counts": {"total": len(board), "online": sum(1 for d in board if d["status"] == "online"), "offline": sum(1 for d in board if d["status"] == "offline"),
                        "alarms_24h": await db.alarm_log.count_documents({"workspace_id": ws["id"], "created_at": {"$gt": since}})},

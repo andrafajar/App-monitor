@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { Activity, AlertTriangle, CircleGauge, Lock, Network, Router } from "lucide-react";
 import axios from "axios";
 import { AggregateTrafficChart } from "@/components/TrafficPanel";
+import { TopologyMap } from "@/components/TopologyMap";
 import { Status } from "@/components/Status";
 import "@/App.css";
 
@@ -48,6 +49,10 @@ export default function DisplayBoard() {
           {data.alarms.map((a, i) => <div key={i} className={`alarm-item ${a.kind === "router-unreachable" ? "danger" : a.kind === "cpu-threshold" ? "warning" : "info"}`} data-testid={`display-alarm-${i}`}>
             <div className="alarm-symbol"><AlertTriangle size={16} /></div><div><b>{a.kind}</b><span>{a.device} · {a.detail}</span><small>{new Date(a.created_at).toLocaleString()}</small></div></div>)}</div></section>
     </div>
+    {data.topology?.nodes?.length > 0 && <section className="panel topo-panel" data-testid="display-topology">
+      <div className="panel-head"><div><p className="eyebrow">TOPOLOGY · {data.topology.links.length} LINKS</p><h2>Network map</h2></div></div>
+      <TopologyMap data={data.topology} readOnly />
+    </section>}
     <section className="panel routers-panel"><div className="panel-head table-head"><div><p className="eyebrow">FLEET / {data.counts.total} DEVICES</p><h2>Device health</h2></div></div>
       <div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>GROUP</th><th>STATUS</th><th>CPU</th><th>MEMORY</th><th>VERSION</th><th>UPTIME</th></tr></thead><tbody>
         {data.devices.map(d => <tr key={d.id} onClick={() => { window.location.href = "/login"; }} data-testid={`display-device-${d.id}`}>

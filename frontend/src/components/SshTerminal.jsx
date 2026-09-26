@@ -75,7 +75,9 @@ export function SshTerminal({ routerId, routerName, proto = "ssh", port }) {
     };
   }, [routerId, proto, attempt]);
 
-  useEffect(() => { if (state === "failed") checkPorts(); }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (state === "failed" || state === "error") checkPorts(); }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const blocked = diag?.ports?.find(p => p.service === proto && p.state !== "open");
 
   const label = proto === "telnet" ? "Telnet" : "SSH";
   const shown = { open: `${label} session live · ${routerName}:${shownPort}`, connecting: `Opening ${label} session…`, dialing: `Dialing ${label} ${shownPort}…`,
@@ -91,6 +93,11 @@ export function SshTerminal({ routerId, routerName, proto = "ssh", port }) {
       </div>
     </div>
     <div className="ssh-host" ref={holder} data-testid="ssh-screen" />
+    {blocked && <div className="port-blocked" data-testid="ssh-blocked-hint">
+      <b>{label} port {blocked.port} is {blocked.state === "refused" ? "closed" : "blocked"} for NetPulse.</b>
+      <span>The server dials from <b className="mono">{diag.from_ip}</b> — your own PC being able to connect does not help. On the device allow that IP:
+        {" "}<code>/ip service set {proto} address={diag.from_ip}/32 port={blocked.port} disabled=no</code> and add a matching accept rule in <code>/ip firewall filter</code> (chain=input dst-port={blocked.port}).</span>
+    </div>}
     {diag && <div className="port-diag" data-testid="ssh-port-diag">
       {diag.error ? <span>{diag.error}</span> : <>
         <span>NetPulse dials <b className="mono">{diag.host}</b> from <b className="mono">{diag.from_ip}</b> — that IP (not your PC) must be allowed in <code>/ip firewall filter</code> and in <code>/ip service</code> “Available From”.</span>

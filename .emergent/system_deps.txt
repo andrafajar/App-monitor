@@ -1,0 +1,2 @@
+snmp=5.9.3+dfsg-2+deb12u1
+snmpd=5.9.3+dfsg-2+deb12u1

@@ -50,13 +50,19 @@ KEY_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 
 
 class RouterCreate(BaseModel):
-    name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str; password: str
+    name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535)
+    username: str = Field("", max_length=64); password: str = Field("", max_length=128)
+    device_type: str = Field("mikrotik", pattern="^(mikrotik|huawei|juniper|cisco|other)$")
     use_ssl: bool = False
+    snmp_enabled: bool = False; snmp_community: str = Field("", max_length=64); snmp_port: int = Field(161, ge=1, le=65535)
     ssh_port: int = Field(22, ge=1, le=65535); telnet_port: int = Field(23, ge=1, le=65535)
     group_id: str; description: str = Field(default="", max_length=200)
 class RouterUpdate(BaseModel):
-    name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str
-    password: str | None = None; use_ssl: bool = False
+    name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535)
+    username: str = Field("", max_length=64); password: str | None = None
+    device_type: str = Field("mikrotik", pattern="^(mikrotik|huawei|juniper|cisco|other)$")
+    use_ssl: bool = False
+    snmp_enabled: bool = False; snmp_community: str = Field("", max_length=64); snmp_port: int = Field(161, ge=1, le=65535)
     ssh_port: int = Field(22, ge=1, le=65535); telnet_port: int = Field(23, ge=1, le=65535)
     group_id: str; description: str = Field(default="", max_length=200)
 class ConfigWrite(BaseModel):
@@ -97,7 +103,7 @@ _ROS_LOCK = threading.Lock()
 def ros_credentials(router: dict, user: dict, user_secret: dict) -> tuple[str, str]:
     if user_secret.get("ros_username") and user_secret.get("ros_password_enc"):
         return user_secret["ros_username"], credential_box().decrypt(user_secret["ros_password_enc"].encode()).decode()
-    if user.get("is_super_admin") or router.get("created_by") == user["user_id"]:
+    if (user.get("is_super_admin") or router.get("created_by") == user["user_id"]) and router.get("password_enc"):
         return router["username"], credential_box().decrypt(router["password_enc"].encode()).decode()
     raise HTTPException(428, "Isi kredensial MikroTik Anda dulu di My settings sebelum membuka router yang di-share")
 
@@ -175,10 +181,23 @@ def probe_router(router: dict, creds: tuple[str, str], user_id: str = "system") 
     except Exception as exc:
         return {"status": "offline", "error": sanitize_error(exc, router)}
 
+async def probe_generic(device: dict) -> dict[str, Any]:
+    """Non-MikroTik vendors: reachability comes from ICMP ping, health from the SNMP sweep."""
+    from monitor import ping_device, poll_snmp
+    ping = await ping_device(device["host"])
+    out: dict[str, Any] = {"status": "online" if ping["alive"] else "offline", "ping_ms": ping.get("rtt_ms"), "ping_loss": ping.get("loss"), "reachable": ping["alive"]}
+    if not ping["alive"]: out["error"] = "ICMP ping did not answer"
+    if device.get("snmp_enabled"):
+        snmp = await poll_snmp(device)
+        if snmp.get("error"): out["error"] = snmp["error"]
+        else: out.update({"cpu": snmp.get("cpu", 0), "uptime": snmp.get("uptime", "—"), "version": (snmp.get("sysdescr") or "—")[:60], "interfaces": len(snmp.get("interfaces") or [])})
+    return out
+
+
 def stored_creds(router: dict) -> tuple[str, str]:
     return router["username"], credential_box().decrypt(router["password_enc"].encode()).decode()
 
-MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "use_ssl", "ssh_port", "telnet_port", "group", "group_id", "workspace_id", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "created_by", "last_probed_at", "updated_at")
+MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "use_ssl", "device_type", "snmp_enabled", "snmp_port", "ping_ms", "ping_loss", "reachable", "last_ping_at", "ssh_port", "telnet_port", "group", "group_id", "workspace_id", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "created_by", "last_probed_at", "updated_at")
 
 def sanitize_router(doc: dict, user: dict | None = None) -> dict:
     out = {k: doc[k] for k in MANAGED_PUBLIC_FIELDS if k in doc}
@@ -239,10 +258,14 @@ async def create_router(item: RouterCreate, request: Request, user: dict = Depen
     ws = await current_workspace(request, user)
     group = await group_in_workspace(item.group_id, ws)
     if not can_manage_group(user, item.group_id): raise HTTPException(403, "No access to this group")
-    doc = item.model_dump(); password = doc.pop("password")
+    doc = item.model_dump(); password = doc.pop("password"); community = doc.pop("snmp_community", "")
+    if doc["device_type"] == "mikrotik" and not (doc["username"] and password): raise HTTPException(422, "MikroTik devices need an API username and password")
+    if doc["snmp_enabled"] and not community: raise HTTPException(422, "A community string is required to enable SNMP")
     doc.update({"id": f"mr-{secrets.token_hex(4)}", "group": group["name"], "workspace_id": ws, "created_by": user["user_id"],
-                "password_enc": credential_box().encrypt(password.encode()).decode(), "created_at": datetime.now(timezone.utc).isoformat(), "status": "pending"})
-    probe = await asyncio.to_thread(probe_router, doc, (doc["username"], password), user["user_id"])
+                "created_at": datetime.now(timezone.utc).isoformat(), "status": "pending"})
+    if password: doc["password_enc"] = credential_box().encrypt(password.encode()).decode()
+    if community: doc["snmp_community_enc"] = credential_box().encrypt(community.encode()).decode()
+    probe = await asyncio.to_thread(probe_router, doc, (doc["username"], password), user["user_id"]) if doc["device_type"] == "mikrotik" else await probe_generic(doc)
     doc.update({k: v for k, v in probe.items() if k != "error"}); doc["last_probed_at"] = datetime.now(timezone.utc).isoformat()
     await db.routers.insert_one(dict(doc))
     await audit(user, "router.create", doc["id"], doc["name"])
@@ -255,13 +278,15 @@ async def update_router(router_id: str, item: RouterUpdate, request: Request, us
     if not can_manage_group(user, item.group_id): raise HTTPException(403, "No access to this group")
     if not (user.get("is_super_admin") or router.get("created_by") == user["user_id"]) and (item.username != router.get("username") or item.password):
         raise HTTPException(403, "Only the owner or a Super Admin can change stored router credentials")
-    update = item.model_dump(); password = update.pop("password")
+    update = item.model_dump(); password = update.pop("password"); community = update.pop("snmp_community", "")
+    if update["snmp_enabled"] and not (community or router.get("snmp_community_enc")): raise HTTPException(422, "A community string is required to enable SNMP")
+    if community: update["snmp_community_enc"] = credential_box().encrypt(community.encode()).decode()
     update.update({"name": update["name"].strip(), "host": update["host"].strip(), "username": update["username"].strip(), "group": group["name"], "updated_at": datetime.now(timezone.utc).isoformat()})
     if password: update["password_enc"] = credential_box().encrypt(password.encode()).decode()
     await db.routers.update_one({"id": router_id}, {"$set": update})
     await asyncio.to_thread(_drop_pool, router_id)
     doc = await db.routers.find_one({"id": router_id}, {"_id": 0})
-    probe = await asyncio.to_thread(probe_router, doc, stored_creds(doc), user["user_id"])
+    probe = await asyncio.to_thread(probe_router, doc, stored_creds(doc), user["user_id"]) if doc.get("device_type", "mikrotik") == "mikrotik" else await probe_generic(doc)
     doc.update({k: v for k, v in probe.items() if k != "error"}); doc["last_probed_at"] = datetime.now(timezone.utc).isoformat()
     await db.routers.update_one({"id": router_id}, {"$set": {k: doc[k] for k in ("status", "cpu", "memory", "uptime", "version", "last_probed_at") if k in doc}})
     await audit(user, "router.update", router_id, doc["name"])
@@ -278,6 +303,10 @@ async def delete_router(router_id: str, request: Request, user: dict = Depends(r
 @api.post("/routers/{router_id}/test-connection")
 async def test_connection(router_id: str, request: Request, user: dict = Depends(require("routers", "read"))):
     router = await visible_router(router_id, request, user)
+    if (router.get("device_type") or "mikrotik") != "mikrotik":
+        probe = await probe_generic(router)
+        await db.routers.update_one({"id": router_id}, {"$set": {**{k: v for k, v in probe.items() if k != "error"}, "last_probed_at": datetime.now(timezone.utc).isoformat()}})
+        return {"ok": True, "status": probe.get("status"), "error": probe.get("error"), "cpu": probe.get("cpu"), "uptime": probe.get("uptime"), "version": probe.get("version")}
     creds = ros_credentials(router, user, await user_secret(user["user_id"]))
     probe = await asyncio.to_thread(probe_router, router, creds, user["user_id"])
     update = {k: v for k, v in probe.items() if k != "error"}; update["last_probed_at"] = datetime.now(timezone.utc).isoformat()
@@ -301,6 +330,7 @@ async def connection_state(router_id: str, request: Request, user: dict = Depend
 async def read_resource(router_id: str, resource: str, request: Request, reveal: bool = Query(False), user: dict = Depends(require("routers", "read"))):
     if resource not in RESOURCE_PATHS: raise HTTPException(400, "Resource is not allow-listed")
     router = await visible_router(router_id, request, user)
+    if (router.get("device_type") or "mikrotik") != "mikrotik": raise HTTPException(400, "RouterOS menus are only available on MikroTik devices — use SNMP or the SSH/Telnet terminal")
     creds = ros_credentials(router, user, await user_secret(user["user_id"]))
     try: items = await asyncio.to_thread(ros_call, router, user["user_id"], creds, RESOURCE_PATHS[resource])
     except Exception as exc: raise ros_http_error(exc, router, "read")
@@ -569,12 +599,18 @@ async def startup():
         await asyncio.to_thread(init_storage)
     except Exception as exc: print(f"[storage] init failed: {exc}")
     try:
+        from monitor import ensure_indexes
+        await ensure_indexes()
+    except Exception as exc: print(f"[monitor] index setup failed: {exc}")
+    try:
         from syslogd import start_syslog
         state = await start_syslog()
         print(f"[syslog] listening={state.get('listening')} port={state.get('port')} {state.get('error', '')}")
     except Exception as exc: print(f"[syslog] start failed: {exc}")
 
 from engine import engine_router
+from monitor import monitor_router
+from topology import topology_router
 from sshterm import ssh_router
 from syslogd import syslog_router
 from display import display_admin, public_router
@@ -583,6 +619,8 @@ from boards import boards_router
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(engine_router)
+app.include_router(monitor_router)
+app.include_router(topology_router)
 app.include_router(ssh_router)
 app.include_router(syslog_router)
 app.include_router(display_admin)

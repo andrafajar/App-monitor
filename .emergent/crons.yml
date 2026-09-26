@@ -6,6 +6,13 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+  - name: monitor-scan
+    description: "Pings every device and polls SNMP v2c (interfaces + CPU), then trims monitoring history older than 30 days"
+    cron: "* * * * *"
+    endpoint: "{{BASE_URL}}/api/cron/monitor-scan"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
   - name: backup-scan
     description: "Runs due scheduled .rsc router backups and stores them in object storage"
     cron: "*/15 * * * *"

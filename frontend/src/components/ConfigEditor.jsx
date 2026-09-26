@@ -19,14 +19,15 @@ function useReferences(open, fields, routerId) {
     if (!open || !sources) { setRefs({}); return; }
     let alive = true;
     setRefs(Object.fromEntries(sources.split(",").map(s => [s, undefined])));
-    Promise.all(sources.split(",").map(async (source) => {
+    sources.split(",").forEach(async (source) => {
       const cfg = REFERENCE_SOURCES[source];
+      let value = null;
       try {
         const r = await api.get(`/routers/${routerId}/resources/${cfg.resource}`);
-        const names = [...new Set((r.data.items || []).map(x => x[cfg.label]).filter(Boolean))];
-        return [source, names];
-      } catch { return [source, null]; }
-    })).then(entries => { if (alive) setRefs(Object.fromEntries(entries)); });
+        value = [...new Set((r.data.items || []).map(x => x[cfg.label]).filter(Boolean))];
+      } catch { value = null; }
+      if (alive) setRefs(prev => ({ ...prev, [source]: value }));
+    });
     return () => { alive = false; };
   }, [open, sources, routerId]);
   return refs;
@@ -67,10 +68,10 @@ export function ConfigEditor({ open, onClose, tab, routerId, row, onDone, onErro
     if (f.source) {
       const list = refs[f.source];
       if (list === undefined) return <select disabled data-testid={`cfg-${f.key}`}><option>loading from router…</option></select>;
-      if (list === null) return <input value={value} onChange={e => set(f.key, e.target.value)} placeholder="type the name (list unavailable)" required={f.required && !isEdit} data-testid={`cfg-${f.key}`} />;
+      if (list === null || list.length === 0) return <input value={value} onChange={e => set(f.key, e.target.value)} placeholder={list === null ? "type the name (list unavailable)" : "none on this router — type a name"} required={f.required && !isEdit} data-testid={`cfg-${f.key}`} />;
       const options = value && !list.includes(value) ? [value, ...list] : list;
       return <select value={value} onChange={e => set(f.key, e.target.value)} required={f.required && !isEdit} data-testid={`cfg-${f.key}`}>
-        <option value="">{list.length ? "— select —" : "— none on this router —"}</option>
+        <option value="">— select —</option>
         {options.map(o => <option key={o} value={o}>{o}</option>)}
       </select>;
     }

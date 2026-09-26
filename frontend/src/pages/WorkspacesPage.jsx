@@ -1,8 +1,37 @@
 import { useEffect, useState } from "react";
-import { Building2, Check, Pencil, Plus, Trash2 } from "lucide-react";
+import { Building2, Check, Copy, Monitor, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Modal } from "@/components/Modal";
 import { api, errorText } from "@/lib/api";
 import { useAuth } from "@/auth/AuthContext";
+
+function PublicDisplay({ wsId, onNotice }) {
+  const [cfg, setCfg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => { try { const r = await api.get(`/workspaces/${wsId}/public-display`); setCfg(r.data.display); } catch { setCfg({ enabled: false }); } };
+  useEffect(() => { load(); }, [wsId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = async (patch) => {
+    setBusy(true);
+    try { const r = await api.put(`/workspaces/${wsId}/public-display`, { enabled: cfg?.enabled ?? false, show_ips: cfg?.show_ips ?? false, title: cfg?.title || "", rotate: false, ...patch }); setCfg(r.data.display); onNotice(patch.rotate ? "Display link rotated" : "Display settings saved"); }
+    catch (err) { onNotice(errorText(err, "Save failed")); } finally { setBusy(false); }
+  };
+  if (!cfg) return null;
+  const url = cfg.path ? `${window.location.origin}${cfg.path}` : "";
+  return <div className="tg-row" data-testid={`public-display-${wsId}`}>
+    <div className="tg-head"><div><Monitor size={14} /><b>Public NOC display (no login)</b></div>
+      <div className="tg-status">{cfg.enabled ? <span className="tg-pill on" data-testid={`display-state-${wsId}`}>Published</span> : <span className="tg-pill off" data-testid={`display-state-${wsId}`}>Disabled</span>}</div></div>
+    <div className="tg-fields">
+      <label className="tg-toggle"><input type="checkbox" checked={cfg.enabled} onChange={e => save({ enabled: e.target.checked })} disabled={busy} data-testid={`display-enable-${wsId}`} /><span>Publish read-only board</span></label>
+      <label className="tg-toggle"><input type="checkbox" checked={cfg.show_ips} onChange={e => save({ show_ips: e.target.checked })} disabled={busy} data-testid={`display-showips-${wsId}`} /><span>Show device IP addresses</span></label>
+      <label>Board title<input value={cfg.title || ""} onChange={e => setCfg(c => ({ ...c, title: e.target.value }))} onBlur={() => save({ title: cfg.title || "" })} placeholder="NOC – Central Operations" data-testid={`display-title-${wsId}`} /></label>
+    </div>
+    {cfg.path && <div className="tg-actions">
+      <code className="mono" data-testid={`display-url-${wsId}`}>{url}</code>
+      <button className="button secondary compact" onClick={() => { navigator.clipboard?.writeText(url); onNotice("Display link copied"); }} data-testid={`display-copy-${wsId}`}><Copy size={13} />Copy link</button>
+      <a className="button secondary compact" href={cfg.path} target="_blank" rel="noreferrer" data-testid={`display-open-${wsId}`}><Monitor size={13} />Open board</a>
+      <button className="tg-del" onClick={() => save({ rotate: true })} disabled={busy} data-testid={`display-rotate-${wsId}`}><RefreshCw size={13} />Rotate link</button>
+    </div>}
+  </div>;
+}
 
 export default function WorkspacesPage({ onNotice, onChanged }) {
   const { can, workspaceId, setWorkspaceId, refresh } = useAuth();
@@ -41,6 +70,7 @@ export default function WorkspacesPage({ onNotice, onChanged }) {
         </div></td>
       </tr>)}
     </tbody></table></div>
+    {can("workspaces", "write") && items.map(w => <PublicDisplay key={w.id} wsId={w.id} onNotice={onNotice} />)}
     <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? "Rename workspace" : "New workspace"} eyebrow="WORKSPACE" testid="workspace-form">
       <form onSubmit={submit} className="add-form">
         <label>Workspace name<input required minLength={2} maxLength={60} value={name} onChange={e => setName(e.target.value)} placeholder="Branch Operations" data-testid="workspace-name" /></label>

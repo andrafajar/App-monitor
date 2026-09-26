@@ -51,11 +51,11 @@ KEY_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 
 class RouterCreate(BaseModel):
     name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str; password: str
-    ssh_port: int = Field(22, ge=1, le=65535)
+    ssh_port: int = Field(22, ge=1, le=65535); telnet_port: int = Field(23, ge=1, le=65535)
     group_id: str; description: str = Field(default="", max_length=200)
 class RouterUpdate(BaseModel):
     name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str
-    password: str | None = None; ssh_port: int = Field(22, ge=1, le=65535)
+    password: str | None = None; ssh_port: int = Field(22, ge=1, le=65535); telnet_port: int = Field(23, ge=1, le=65535)
     group_id: str; description: str = Field(default="", max_length=200)
 class ConfigWrite(BaseModel):
     values: dict[str, str] = Field(default_factory=dict); item_id: str | None = Field(default=None, pattern=r"^\*[A-Za-z0-9]+$")
@@ -175,7 +175,7 @@ def probe_router(router: dict, creds: tuple[str, str], user_id: str = "system") 
 def stored_creds(router: dict) -> tuple[str, str]:
     return router["username"], credential_box().decrypt(router["password_enc"].encode()).decode()
 
-MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "ssh_port", "group", "group_id", "workspace_id", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "created_by", "last_probed_at", "updated_at")
+MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "ssh_port", "telnet_port", "group", "group_id", "workspace_id", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "created_by", "last_probed_at", "updated_at")
 
 def sanitize_router(doc: dict, user: dict | None = None) -> dict:
     out = {k: doc[k] for k in MANAGED_PUBLIC_FIELDS if k in doc}
@@ -410,7 +410,7 @@ async def audit_list(user: dict = Depends(require("audit", "read"))):
 
 
 # ---------- Telegram per role ----------
-ALARM_LABELS = {"cpu-threshold": ("🔥", "CPU threshold exceeded"), "interface-status": ("📡", "Interface status changed"), "router-unreachable": ("🚨", "Router unreachable"), "test": ("✅", "NetPulse test alert")}
+ALARM_LABELS = {"cpu-threshold": ("🔥", "CPU threshold exceeded"), "interface-status": ("📡", "Interface status changed"), "router-unreachable": ("🚨", "Device unreachable"), "syslog-match": ("📜", "Syslog alarm"), "test": ("✅", "NetPulse test alert")}
 
 def mask_token(token: str) -> str:
     if not token or len(token) < 12: return "••••••"
@@ -465,19 +465,19 @@ async def test_telegram_config(role_id: str, user: dict = Depends(require("notif
     result = await telegram_send(token, role["telegram"]["chat_id"], format_alarm("test", "NetPulse control plane", f"Telegram delivery verified for role {role['name']}"))
     return {"ok": True, "message_id": result.get("result", {}).get("message_id")}
 
-async def deliver_alarm(router: dict, kind: str, detail: str, source: str = "auto") -> list[str]:
+async def deliver_alarm(router: dict, kind: str, detail: str, source: str = "auto", extra: dict | None = None) -> list[str]:
     """Send an alarm to the Telegram channel of every role that covers this router's group, then log it."""
     roles = await db.roles.find({"group_ids": router.get("group_id"), "telegram.enabled": True}, {"_id": 0}).to_list(200)
-    text = format_alarm(kind, router.get("name", "router"), detail); sent = []
+    text = format_alarm(kind, router.get("name", "router"), detail); sent = []; failed = []
     for role in roles:
         try:
             token = credential_box().decrypt(role["telegram"]["token_enc"].encode()).decode()
             await telegram_send(token, role["telegram"]["chat_id"], text)
             sent.append(role["name"])
-        except Exception: continue
+        except Exception as exc: failed.append(f"{role['name']}: {type(exc).__name__}")
     await db.alarm_log.insert_one({"id": f"alm-{uuid.uuid4().hex[:8]}", "workspace_id": router.get("workspace_id"), "router_id": router["id"], "router_name": router.get("name"),
-                                   "group_id": router.get("group_id"), "kind": kind, "detail": detail, "roles_notified": sent, "source": source,
-                                   "created_at": datetime.now(timezone.utc).isoformat()})
+                                   "group_id": router.get("group_id"), "kind": kind, "detail": detail, "roles_notified": sent, "roles_failed": failed, "source": source,
+                                   **(extra or {}), "created_at": datetime.now(timezone.utc).isoformat()})
     return sent
 
 @api.post("/alarms/dispatch")
@@ -565,14 +565,26 @@ async def startup():
         from storage import init_storage
         await asyncio.to_thread(init_storage)
     except Exception as exc: print(f"[storage] init failed: {exc}")
+    try:
+        from syslogd import start_syslog
+        state = await start_syslog()
+        print(f"[syslog] listening={state.get('listening')} port={state.get('port')} {state.get('error', '')}")
+    except Exception as exc: print(f"[syslog] start failed: {exc}")
 
 from engine import engine_router
 from sshterm import ssh_router
+from syslogd import syslog_router
+from display import display_admin, public_router
+from boards import boards_router
 
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(engine_router)
 app.include_router(ssh_router)
+app.include_router(syslog_router)
+app.include_router(display_admin)
+app.include_router(public_router)
+app.include_router(boards_router)
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","), allow_methods=["*"], allow_headers=["*"])
 

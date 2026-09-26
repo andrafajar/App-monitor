@@ -11,7 +11,7 @@ load_dotenv(ROOT_DIR / ".env")
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
 
-MODULES = ["overview", "routers", "groups", "alarms", "audit", "notifications", "backups", "users", "roles", "workspaces", "ros_config"]
+MODULES = ["overview", "routers", "groups", "alarms", "audit", "notifications", "backups", "syslog", "users", "roles", "workspaces", "ros_config"]
 LEVELS = {"none": 0, "read": 1, "write": 2}
 DEFAULT_WORKSPACE_ID = "ws-default"
 

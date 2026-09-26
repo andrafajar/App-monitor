@@ -34,6 +34,30 @@ class ScheduleIn(BaseModel):
     keep: int = Field(10, ge=1, le=100)
 
 
+class AlarmInterfacesIn(BaseModel):
+    mode: str = Field("all", pattern="^(all|ethernet|selected|off)$")
+    interfaces: list[str] = Field(default_factory=list, max_length=200)
+
+
+ETHERNET_PREFIXES = ("ether", "sfp", "combo", "qsfp")
+
+
+def watched_interfaces(rows: list[dict], router: dict) -> dict[str, bool]:
+    """Map interface name -> running, honouring this router's alarm watch mode."""
+    mode = router.get("alarm_iface_mode") or "all"
+    chosen = set(router.get("alarm_ifaces") or [])
+    if mode == "off": return {}
+    out = {}
+    for row in rows:
+        name = row.get("name")
+        if not name or row.get("disabled") == "true": continue
+        kind = (row.get("type") or "").lower()
+        if mode == "ethernet" and not kind.startswith(ETHERNET_PREFIXES): continue
+        if mode == "selected" and name not in chosen: continue
+        out[name] = row.get("running") == "true"
+    return out
+
+
 # ---------- live interface traffic ----------
 def sample_interfaces(router: dict, user_id: str, creds: tuple[str, str]) -> dict[str, dict[str, Any]]:
     from server import ros_call
@@ -78,8 +102,15 @@ async def live_traffic(request: Request, user: dict = Depends(require("overview"
         except Exception: return {"id": doc["id"], "name": doc["name"], "state": "unreachable"}
         prev = await store_sample(doc["id"], ifaces, ts)
         rx, tx = totals(ifaces)
-        inbound = bps(prev.get("rx", 0), rx, ts - prev.get("ts", 0)) if prev else None
-        outbound = bps(prev.get("tx", 0), tx, ts - prev.get("ts", 0)) if prev else None
+        dt = ts - (prev or {}).get("ts", 0)
+        if prev and dt >= 3:
+            inbound, outbound = bps(prev.get("rx", 0), rx, dt), bps(prev.get("tx", 0), tx, dt)
+            if inbound is not None and outbound is not None:
+                await db.traffic_state.update_one({"router_id": doc["id"]}, {"$set": {"last_in": inbound, "last_out": outbound}})
+        elif prev:  # another sampler just refreshed the counters — reuse the last good rate
+            inbound, outbound = prev.get("last_in"), prev.get("last_out")
+        else:
+            inbound = outbound = None
         ready = inbound is not None and outbound is not None
         return {"id": doc["id"], "name": doc["name"], "state": "ready" if ready else "warming-up",
                 "inbound": round((inbound or 0) / 1e6, 2), "outbound": round((outbound or 0) / 1e6, 2), "interfaces": len(ifaces)}
@@ -137,6 +168,66 @@ async def put_alarm_settings(body: AlarmSettingsIn, request: Request, user: dict
     ws = await current_workspace(request, user)
     await db.alarm_settings.update_one({"workspace_id": ws}, {"$set": {**body.model_dump(), "workspace_id": ws, "updated_at": now().isoformat(), "updated_by": user["email"]}}, upsert=True)
     return {"ok": True, "settings": body.model_dump()}
+
+
+@engine_router.get("/routers/{router_id}/alarm-interfaces")
+async def get_alarm_interfaces(router_id: str, request: Request, user: dict = Depends(require("alarms", "read"))):
+    from server import ros_call, ros_credentials, user_secret, visible_router
+    router = await visible_router(router_id, request, user)
+    available, error = [], None
+    try:
+        creds = ros_credentials(router, user, await user_secret(user["user_id"]))
+        rows = await asyncio.to_thread(ros_call, router, user["user_id"], creds, "/interface")
+        available = [{"name": r.get("name"), "type": (r.get("type") or "").lower(), "running": r.get("running") == "true"} for r in rows if r.get("name")]
+    except Exception as exc: error = f"{type(exc).__name__}"
+    watching = watched_interfaces([{"name": a["name"], "type": a["type"], "running": "true" if a["running"] else "false"} for a in available], router)
+    return {"mode": router.get("alarm_iface_mode") or "all", "interfaces": router.get("alarm_ifaces") or [], "available": available, "watching": sorted(watching), "error": error}
+
+
+@engine_router.put("/routers/{router_id}/alarm-interfaces")
+async def put_alarm_interfaces(router_id: str, body: AlarmInterfacesIn, request: Request, user: dict = Depends(require("alarms", "write"))):
+    from server import audit, visible_router
+    await visible_router(router_id, request, user)
+    if body.mode == "selected" and not body.interfaces: raise HTTPException(422, "Pick at least one interface to watch")
+    await db.routers.update_one({"id": router_id}, {"$set": {"alarm_iface_mode": body.mode, "alarm_ifaces": body.interfaces if body.mode == "selected" else []}})
+    await db.interface_state.delete_one({"router_id": router_id})
+    await audit(user, "alarm.interfaces", router_id, f"{body.mode}: {', '.join(body.interfaces[:8]) or 'auto'}")
+    return {"ok": True, "mode": body.mode, "interfaces": body.interfaces if body.mode == "selected" else []}
+
+
+# ---------- reachability check (helps diagnose blocked SSH/Telnet ports) ----------
+_OUTBOUND_IP: dict[str, Any] = {}
+
+
+async def outbound_ip() -> str:
+    if _OUTBOUND_IP.get("value") and (now().timestamp() - _OUTBOUND_IP["at"]) < 3600: return _OUTBOUND_IP["value"]
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=6) as http:
+            value = (await http.get("https://api.ipify.org")).text.strip()
+    except Exception: value = "unknown"
+    _OUTBOUND_IP.update({"value": value, "at": now().timestamp()})
+    return value
+
+
+async def probe_port(host: str, port: int) -> str:
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5)
+        writer.close()
+        return "open"
+    except asyncio.TimeoutError: return "filtered"
+    except ConnectionRefusedError: return "refused"
+    except Exception as exc: return f"error:{type(exc).__name__}"
+
+
+@engine_router.get("/routers/{router_id}/port-check")
+async def port_check(router_id: str, request: Request, user: dict = Depends(require("routers", "read"))):
+    from server import visible_router
+    router = await visible_router(router_id, request, user)
+    targets = {"api": int(router.get("port") or 8728), "ssh": int(router.get("ssh_port") or 22), "telnet": int(router.get("telnet_port") or 23), "winbox": 8291}
+    results = await asyncio.gather(*[probe_port(router["host"], p) for p in targets.values()])
+    return {"host": router["host"], "from_ip": await outbound_ip(),
+            "ports": [{"service": name, "port": port, "state": state} for (name, port), state in zip(targets.items(), results)]}
 
 
 # ---------- backup schedules ----------
@@ -245,7 +336,8 @@ async def scan_router(router: dict, settings: dict) -> list[str]:
     if settings["notify_interface"]:
         try: rows = await asyncio.to_thread(ros_call, router, "scheduler", creds, "/interface")
         except Exception: return fired
-        current = {r["name"]: (r.get("running") == "true") for r in rows if r.get("name") and r.get("disabled") != "true"}
+        current = watched_interfaces(rows, router)
+        if not current: return fired
         snapshot = await db.interface_state.find_one({"router_id": router["id"]}, {"_id": 0})
         await db.interface_state.update_one({"router_id": router["id"]}, {"$set": {"router_id": router["id"], "state": current, "updated_at": now().isoformat()}}, upsert=True)
         previous_state = (snapshot or {}).get("state") or {}
@@ -282,6 +374,9 @@ def verify_cron(authorization: str | None):
     if not hmac.compare_digest(authorization[7:], secret): raise HTTPException(401, "Unauthorized")
 
 
+_CRON_TASKS: set = set()
+
+
 async def cron_ack(name: str, payload: dict | None, authorization: str | None, x_webhook_id: str | None, worker):
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     verify_cron(authorization)
@@ -294,7 +389,9 @@ async def cron_ack(name: str, payload: dict | None, authorization: str | None, x
         try: result = await worker()
         except Exception as exc: result = {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
         await db.cron_runs.update_one({"run_id": run_id}, {"$set": {"finished_at": now().isoformat(), "result": result}})
-    asyncio.create_task(job())
+    task = asyncio.create_task(job())
+    _CRON_TASKS.add(task)
+    task.add_done_callback(_CRON_TASKS.discard)
     return {"ok": True, "accepted": True, "job": name, "run_id": run_id}
 
 

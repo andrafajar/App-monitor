@@ -10,6 +10,7 @@ import { BackupsPanel } from "@/components/BackupsPanel";
 import { TerminalPanel } from "@/components/TerminalPanel";
 import { TrafficPanel } from "@/components/TrafficPanel";
 import { SshTerminal } from "@/components/SshTerminal";
+import { AlarmWatchPanel } from "@/components/AlarmWatchPanel";
 
 export function ResourceTable({ tab, routerId, revealSecret, onRevealToggle, onNotice, onGoSettings, reloadKey }) {
   const resourceKey = RESOURCE_KEY[tab];
@@ -147,10 +148,12 @@ export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, o
         </div>)}
       </aside>
       <div className="ws-main" data-testid="ws-main">
-        <div className="ws-cat-head"><p className="eyebrow">{cat === "Backups" ? "OBJECT STORAGE · SNAPSHOTS & SCHEDULE" : cat === "Terminal (API)" ? "ROUTEROS API · COMMAND BRIDGE" : cat === "Terminal (SSH)" ? "ROUTEROS SHELL · SSH" : cat === "Traffic" ? "ROUTEROS API · LIVE BANDWIDTH" : "ROUTEROS API"} · {cat.toUpperCase()}</p><h2 data-testid="ws-cat-title">{cat}</h2></div>
+        <div className="ws-cat-head"><p className="eyebrow">{cat === "Backups" ? "OBJECT STORAGE · SNAPSHOTS & SCHEDULE" : cat === "Terminal (API)" ? "ROUTEROS API · COMMAND BRIDGE" : cat === "Terminal (SSH)" ? "ROUTEROS SHELL · SSH" : cat === "Terminal (Telnet)" ? "ROUTEROS SHELL · TELNET" : cat === "Traffic" ? "ROUTEROS API · LIVE BANDWIDTH" : "ROUTEROS API"} · {cat.toUpperCase()}</p><h2 data-testid="ws-cat-title">{cat}</h2></div>
         {cat === "Backups" ? <BackupsPanel routerId={router.id} onNotice={onNotice} onGoSettings={onGoSettings} />
           : cat === "Traffic" ? <TrafficPanel routerId={router.id} onGoSettings={onGoSettings} />
-          : cat === "Terminal (SSH)" ? <SshTerminal routerId={router.id} routerName={router.name} sshPort={router.ssh_port} />
+          : cat === "Terminal (SSH)" ? <SshTerminal routerId={router.id} routerName={router.name} proto="ssh" port={router.ssh_port} />
+          : cat === "Terminal (Telnet)" ? <SshTerminal routerId={router.id} routerName={router.name} proto="telnet" port={router.telnet_port} />
+          : cat === "Alarm Watch" ? <AlarmWatchPanel routerId={router.id} routerName={router.name} onNotice={onNotice} />
           : cat === "Terminal (API)" ? <TerminalPanel routerId={router.id} routerName={router.name} onGoSettings={onGoSettings} />
           : <ResourceTable key={`${router.id}-${cat}`} tab={cat} routerId={router.id} revealSecret={revealSecret} onRevealToggle={() => setRevealSecret(v => !v)} onNotice={onNotice} onGoSettings={onGoSettings} reloadKey={reloadKey} />}
       </div>

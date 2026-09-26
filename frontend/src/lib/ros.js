@@ -97,10 +97,10 @@ export const WINBOX_MENU = [
   { section: "System", items: ["System Identity", "System Resource", "System Time", "System Health"] },
   { section: "Log", items: ["Logs"] },
   { section: "Files", items: ["Backups"] },
-  { section: "Tools", items: ["Terminal (SSH)", "Terminal (API)"] },
+  { section: "Tools", items: ["Terminal (SSH)", "Terminal (Telnet)", "Terminal (API)", "Alarm Watch"] },
 ];
 
-export const PANEL_TABS = ["Backups", "Terminal (SSH)", "Terminal (API)", "Traffic"];
+export const PANEL_TABS = ["Backups", "Terminal (SSH)", "Terminal (Telnet)", "Terminal (API)", "Traffic", "Alarm Watch"];
 
 export const MODULE_LABELS = {
   overview: "Overview dashboard", routers: "Routers (inventory & read)", groups: "Device groups", alarms: "Alarms",

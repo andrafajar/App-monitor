@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ExternalLink, Eye, EyeOff, Loader2, Pencil, Plus, Power, RefreshCw, Router, Trash2 } from "lucide-react";
 import { api, errorText } from "@/lib/api";
-import { EDITABLE_FIELDS, RESOURCE_COLUMNS, RESOURCE_KEY, SINGLE_OBJECT, WINBOX_MENU } from "@/lib/ros";
+import { EDITABLE_FIELDS, PANEL_TABS, RESOURCE_COLUMNS, RESOURCE_KEY, SENSITIVE_TABS, SINGLE_OBJECT, WINBOX_MENU } from "@/lib/ros";
 import { ConfigEditor, ConfirmRemove, PermissionPopup } from "@/components/ConfigEditor";
 import { Status } from "@/components/Status";
 const rid = (row) => row?.[".id"] || row?.id;
+const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 import { BackupsPanel } from "@/components/BackupsPanel";
 import { TerminalPanel } from "@/components/TerminalPanel";
+import { TrafficPanel } from "@/components/TrafficPanel";
+import { SshTerminal } from "@/components/SshTerminal";
 
 export function ResourceTable({ tab, routerId, revealSecret, onRevealToggle, onNotice, onGoSettings, reloadKey }) {
   const resourceKey = RESOURCE_KEY[tab];
@@ -21,7 +24,7 @@ export function ResourceTable({ tab, routerId, revealSecret, onRevealToggle, onN
     if (!resourceKey || !routerId) return;
     const controller = new AbortController();
     setState(s => ({ ...s, loading: true, error: "" }));
-    const params = resourceKey === "ppp-secrets" && revealSecret ? "?reveal=true" : "";
+    const params = SENSITIVE_TABS.has(tab) && revealSecret ? "?reveal=true" : "";
     api.get(`/routers/${routerId}/resources/${resourceKey}${params}`, { signal: controller.signal })
       .then(r => setState({ loading: false, error: "", items: r.data?.items || [], writable: r.data?.writable || [] }))
       .catch(err => {
@@ -62,7 +65,7 @@ export function ResourceTable({ tab, routerId, revealSecret, onRevealToggle, onN
     <div className="res-toolbar">
       <b data-testid={`${resourceKey}-count`}>{state.items.length} {tab.toLowerCase()}</b>
       <div className="res-tools">
-        {tab === "PPP Secrets" && <button className={`reveal-btn ${revealSecret ? "on" : ""}`} onClick={onRevealToggle} data-testid="ppp-secrets-reveal-toggle">{revealSecret ? <><EyeOff size={13} />Hide passwords</> : <><Eye size={13} />Reveal passwords</>}</button>}
+        {SENSITIVE_TABS.has(tab) && <button className={`reveal-btn ${revealSecret ? "on" : ""}`} onClick={onRevealToggle} data-testid={`${resourceKey}-reveal-toggle`}>{revealSecret ? <><EyeOff size={13} />Hide passwords</> : <><Eye size={13} />Reveal passwords</>}</button>}
         <button className="icon-btn" onClick={() => setTick(t => t + 1)} title="Reload" data-testid={`${resourceKey}-reload`}><RefreshCw size={14} /></button>
         {canAdd && <button className="button primary compact" onClick={() => setEditor({ row: null })} data-testid={`${resourceKey}-add`}><Plus size={13} />Add</button>}
       </div>
@@ -85,12 +88,12 @@ export function ResourceTable({ tab, routerId, revealSecret, onRevealToggle, onN
 }
 
 export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, onEdit, onGoSettings, canWriteRouters, initialCat }) {
-  const [cat, setCat] = useState(initialCat && (RESOURCE_KEY[initialCat] || ["Backups", "Terminal"].includes(initialCat)) ? initialCat : "Interfaces");
+  const [cat, setCat] = useState(initialCat && (RESOURCE_KEY[initialCat] || PANEL_TABS.includes(initialCat)) ? initialCat : "Interfaces");
   const [revealSecret, setRevealSecret] = useState(false);
   const [conn, setConn] = useState({ connected: false, connected_at: 0 });
   const [busy, setBusy] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  useEffect(() => { if (cat !== "PPP Secrets") setRevealSecret(false); }, [cat]);
+  useEffect(() => { if (!SENSITIVE_TABS.has(cat)) setRevealSecret(false); }, [cat]);
 
   const loadConn = async () => { try { const r = await api.get(`/routers/${router.id}/connection`); setConn(r.data || { connected: false }); } catch { setConn({ connected: false }); } };
   useEffect(() => { loadConn(); const t = setInterval(loadConn, 15000); return () => clearInterval(t); }, [router.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -140,13 +143,15 @@ export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, o
       <aside className="ws-menu" data-testid="ws-menu">
         {WINBOX_MENU.map(section => <div key={section.section} className="ws-menu-section">
           <span className="ws-menu-title">{section.section}</span>
-          {section.items.map(item => <button key={item} className={cat === item ? "active" : ""} onClick={() => setCat(item)} data-testid={`ws-menu-${RESOURCE_KEY[item] || item.toLowerCase()}`}>{item.replace(/^(PPP|System) /, "")}</button>)}
+          {section.items.map(item => <button key={item} className={cat === item ? "active" : ""} onClick={() => setCat(item)} data-testid={`ws-menu-${RESOURCE_KEY[item] || slugify(item)}`}>{item.replace(/^(PPP|System|Hotspot) /, "")}</button>)}
         </div>)}
       </aside>
       <div className="ws-main" data-testid="ws-main">
-        <div className="ws-cat-head"><p className="eyebrow">{cat === "Backups" ? "OBJECT STORAGE" : cat === "Terminal" ? "ROUTEROS API · COMMAND LINE" : "ROUTEROS API"} · {cat.toUpperCase()}</p><h2 data-testid="ws-cat-title">{cat}</h2></div>
+        <div className="ws-cat-head"><p className="eyebrow">{cat === "Backups" ? "OBJECT STORAGE · SNAPSHOTS & SCHEDULE" : cat === "Terminal (API)" ? "ROUTEROS API · COMMAND BRIDGE" : cat === "Terminal (SSH)" ? "ROUTEROS SHELL · SSH" : cat === "Traffic" ? "ROUTEROS API · LIVE BANDWIDTH" : "ROUTEROS API"} · {cat.toUpperCase()}</p><h2 data-testid="ws-cat-title">{cat}</h2></div>
         {cat === "Backups" ? <BackupsPanel routerId={router.id} onNotice={onNotice} onGoSettings={onGoSettings} />
-          : cat === "Terminal" ? <TerminalPanel routerId={router.id} routerName={router.name} onGoSettings={onGoSettings} />
+          : cat === "Traffic" ? <TrafficPanel routerId={router.id} onGoSettings={onGoSettings} />
+          : cat === "Terminal (SSH)" ? <SshTerminal routerId={router.id} routerName={router.name} sshPort={router.ssh_port} />
+          : cat === "Terminal (API)" ? <TerminalPanel routerId={router.id} routerName={router.name} onGoSettings={onGoSettings} />
           : <ResourceTable key={`${router.id}-${cat}`} tab={cat} routerId={router.id} revealSecret={revealSecret} onRevealToggle={() => setRevealSecret(v => !v)} onNotice={onNotice} onGoSettings={onGoSettings} reloadKey={reloadKey} />}
       </div>
     </div>

@@ -81,3 +81,4 @@ memory/test_credentials.md
 # Mobile development
 android-sdk/
 .env
+frontend/node_modules/.cache/default-development/10.pack

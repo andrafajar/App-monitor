@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, KeyRound, Loader2, Save, ShieldAlert, Trash2 } from "lucide-react";
 import { Modal } from "@/components/Modal";
-import { EDITABLE_FIELDS, RESOURCE_KEY } from "@/lib/ros";
+import { EDITABLE_FIELDS, REFERENCE_SOURCES, RESOURCE_KEY } from "@/lib/ros";
 import { api, errorText } from "@/lib/api";
 const rid = (row) => row?.[".id"] || row?.id;
 
@@ -11,12 +11,34 @@ const toForm = (fields, row) => Object.fromEntries(fields.map(f => {
   return [f.key, String(v)];
 }));
 
+// Pick-lists (interfaces, bridges, pools, profiles…) are read live from the router so no name has to be typed by hand.
+function useReferences(open, fields, routerId) {
+  const [refs, setRefs] = useState({});
+  const sources = [...new Set(fields.filter(f => f.source).map(f => f.source))].sort().join(",");
+  useEffect(() => {
+    if (!open || !sources) { setRefs({}); return; }
+    let alive = true;
+    setRefs(Object.fromEntries(sources.split(",").map(s => [s, undefined])));
+    Promise.all(sources.split(",").map(async (source) => {
+      const cfg = REFERENCE_SOURCES[source];
+      try {
+        const r = await api.get(`/routers/${routerId}/resources/${cfg.resource}`);
+        const names = [...new Set((r.data.items || []).map(x => x[cfg.label]).filter(Boolean))];
+        return [source, names];
+      } catch { return [source, null]; }
+    })).then(entries => { if (alive) setRefs(Object.fromEntries(entries)); });
+    return () => { alive = false; };
+  }, [open, sources, routerId]);
+  return refs;
+}
+
 export function ConfigEditor({ open, onClose, tab, routerId, row, onDone, onError }) {
   const fields = EDITABLE_FIELDS[tab] || [];
   const resource = RESOURCE_KEY[tab];
   const isEdit = !!row;
   const [form, setForm] = useState({});
   const [busy, setBusy] = useState(false);
+  const refs = useReferences(open, fields, routerId);
   useEffect(() => { if (open) setForm(toForm(fields, row)); }, [open, row, tab]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -38,14 +60,27 @@ export function ConfigEditor({ open, onClose, tab, routerId, row, onDone, onErro
     finally { setBusy(false); }
   };
 
-  return <Modal open={open} onClose={onClose} title={isEdit ? `Edit ${tab}` : `New ${tab}`} eyebrow={`ROUTEROS · ${resource.toUpperCase()}${rid(row) ? ` · ${rid(row)}` : ""}`} hint="Changes are sent live to the router through the RouterOS API using your MikroTik credentials." testid="config-editor">
+  const renderField = (f) => {
+    const value = form[f.key] ?? "";
+    if (f.type === "yesno") return <select value={value} onChange={e => set(f.key, e.target.value)} data-testid={`cfg-${f.key}`}><option value="">— keep —</option><option value="no">no</option><option value="yes">yes</option></select>;
+    if (f.type === "select") return <select value={value} onChange={e => set(f.key, e.target.value)} required={f.required && !isEdit} data-testid={`cfg-${f.key}`}><option value="">—</option>{f.options.map(o => <option key={o} value={o}>{o}</option>)}</select>;
+    if (f.source) {
+      const list = refs[f.source];
+      if (list === undefined) return <select disabled data-testid={`cfg-${f.key}`}><option>loading from router…</option></select>;
+      if (list === null) return <input value={value} onChange={e => set(f.key, e.target.value)} placeholder="type the name (list unavailable)" required={f.required && !isEdit} data-testid={`cfg-${f.key}`} />;
+      const options = value && !list.includes(value) ? [value, ...list] : list;
+      return <select value={value} onChange={e => set(f.key, e.target.value)} required={f.required && !isEdit} data-testid={`cfg-${f.key}`}>
+        <option value="">{list.length ? "— select —" : "— none on this router —"}</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>;
+    }
+    return <input type={f.type === "password" ? "password" : "text"} value={value} onChange={e => set(f.key, e.target.value)} placeholder={f.placeholder || ""} required={f.required && !isEdit} autoComplete="off" data-testid={`cfg-${f.key}`} />;
+  };
+
+  return <Modal open={open} onClose={onClose} title={isEdit ? `Edit ${tab}` : `New ${tab}`} eyebrow={`ROUTEROS · ${resource.toUpperCase()}${rid(row) ? ` · ${rid(row)}` : ""}`} hint="Changes are sent live to the router through the RouterOS API using your MikroTik credentials. Reference fields list the objects that exist on this router." testid="config-editor">
     <form onSubmit={submit} className="add-form cfg-form">
       <div className="cfg-grid">
-        {fields.map(f => <label key={f.key}>{f.key.replaceAll("-", " ")}{f.required && !isEdit && " *"}
-          {f.type === "yesno" ? <select value={form[f.key] ?? ""} onChange={e => set(f.key, e.target.value)} data-testid={`cfg-${f.key}`}><option value="">— keep —</option><option value="no">no</option><option value="yes">yes</option></select>
-            : f.type === "select" ? <select value={form[f.key] ?? ""} onChange={e => set(f.key, e.target.value)} required={f.required && !isEdit} data-testid={`cfg-${f.key}`}><option value="">—</option>{f.options.map(o => <option key={o} value={o}>{o}</option>)}</select>
-            : <input type={f.type === "password" ? "password" : "text"} value={form[f.key] ?? ""} onChange={e => set(f.key, e.target.value)} placeholder={f.placeholder || ""} required={f.required && !isEdit} autoComplete="off" data-testid={`cfg-${f.key}`} />}
-        </label>)}
+        {fields.map(f => <label key={f.key}>{f.key.replaceAll("-", " ")}{f.required && !isEdit && " *"}{renderField(f)}</label>)}
       </div>
       <div className="modal-actions">
         <button type="button" className="button secondary" onClick={onClose} data-testid="config-editor-cancel">Cancel</button>

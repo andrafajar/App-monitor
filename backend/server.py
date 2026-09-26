@@ -12,14 +12,17 @@ import httpx
 app = FastAPI(title="NetPulse MikroTik Control Plane")
 api = APIRouter(prefix="/api")
 
-DEMO_TRAFFIC = [{"time": f"{i+8:02d}:00", "inbound": v + 12, "outbound": max(8, v - 3)} for i, v in enumerate([0, 28, 21, 44, 36, 58, 45, 66, 52, 73, 62, 81])]
 LEGACY_GROUP_NAMES = ["Head Office", "Region East", "Operations", "Partner · PT ABC"]
 
 RESOURCE_PATHS = {
     "interfaces": "/interface",
-    "addresses": "/ip/address", "arp": "/ip/arp",
+    "bridge": "/interface/bridge", "bridge-ports": "/interface/bridge/port", "vlan": "/interface/vlan",
+    "wireless": "/interface/wireless", "wireless-security": "/interface/wireless/security-profiles",
+    "addresses": "/ip/address", "arp": "/ip/arp", "ip-pools": "/ip/pool",
     "dhcp-server": "/ip/dhcp-server", "dhcp-leases": "/ip/dhcp-server/lease",
     "firewall": "/ip/firewall/filter", "nat": "/ip/firewall/nat", "routes": "/ip/route",
+    "hotspot-servers": "/ip/hotspot", "hotspot-profiles": "/ip/hotspot/profile",
+    "hotspot-users": "/ip/hotspot/user", "hotspot-user-profiles": "/ip/hotspot/user/profile", "hotspot-active": "/ip/hotspot/active",
     "ppp-profiles": "/ppp/profile", "ppp-secrets": "/ppp/secret",
     "queues": "/queue/simple",
     "wireless-registration": "/interface/wireless/registration-table",
@@ -30,26 +33,32 @@ RESOURCE_PATHS = {
 # Which RouterOS commands the UI may issue per resource (writes gated by the ros_config privilege).
 WRITE_COMMANDS = {
     "interfaces": {"set"}, "addresses": {"add", "set", "remove"}, "arp": {"add", "set", "remove"},
+    "bridge": {"add", "set", "remove"}, "bridge-ports": {"add", "set", "remove"}, "vlan": {"add", "set", "remove"},
+    "wireless": {"set"}, "wireless-security": {"add", "set", "remove"},
+    "ip-pools": {"add", "set", "remove"},
     "dhcp-server": {"add", "set", "remove"}, "dhcp-leases": {"add", "set", "remove"},
     "firewall": {"add", "set", "remove"}, "nat": {"add", "set", "remove"}, "routes": {"add", "set", "remove"},
+    "hotspot-servers": {"add", "set", "remove"}, "hotspot-profiles": {"add", "set", "remove"},
+    "hotspot-users": {"add", "set", "remove"}, "hotspot-user-profiles": {"add", "set", "remove"}, "hotspot-active": {"remove"},
     "ppp-profiles": {"add", "set", "remove"}, "ppp-secrets": {"add", "set", "remove"}, "queues": {"add", "set", "remove"},
     "system-clock": {"set"}, "system-identity": {"set"},
 }
 PPP_SECRET_SENSITIVE = ("password", "caller-id", "last-caller-id")
+SENSITIVE_FIELDS = {"ppp-secrets": PPP_SECRET_SENSITIVE, "hotspot-users": ("password",), "wireless-security": ("wpa-pre-shared-key", "wpa2-pre-shared-key", "eap-methods")}
 REDACTED_PLACEHOLDER = "••••••"
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 
 
 class RouterCreate(BaseModel):
     name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str; password: str
+    ssh_port: int = Field(22, ge=1, le=65535)
     group_id: str; description: str = Field(default="", max_length=200)
 class RouterUpdate(BaseModel):
     name: str = Field(min_length=2); host: str; port: int = Field(8728, ge=1, le=65535); username: str
-    password: str | None = None; group_id: str; description: str = Field(default="", max_length=200)
+    password: str | None = None; ssh_port: int = Field(22, ge=1, le=65535)
+    group_id: str; description: str = Field(default="", max_length=200)
 class ConfigWrite(BaseModel):
     values: dict[str, str] = Field(default_factory=dict); item_id: str | None = Field(default=None, pattern=r"^\*[A-Za-z0-9]+$")
-class ScheduleRequest(BaseModel):
-    frequency: str = Field(pattern="^(daily|weekly|monthly)$"); hour: int = Field(ge=0, le=23); minute: int = Field(ge=0, le=59)
 class TelegramConfigIn(BaseModel):
     bot_token: str = Field(min_length=20, max_length=200, pattern=r"^\d+:[A-Za-z0-9_\-]+$")
     chat_id: str = Field(min_length=1, max_length=40, pattern=r"^-?\d+$")
@@ -166,7 +175,7 @@ def probe_router(router: dict, creds: tuple[str, str], user_id: str = "system") 
 def stored_creds(router: dict) -> tuple[str, str]:
     return router["username"], credential_box().decrypt(router["password_enc"].encode()).decode()
 
-MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "group", "group_id", "workspace_id", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "created_by", "last_probed_at", "updated_at")
+MANAGED_PUBLIC_FIELDS = ("id", "name", "host", "port", "ssh_port", "group", "group_id", "workspace_id", "description", "status", "cpu", "memory", "uptime", "version", "traffic", "interfaces", "color", "created_at", "created_by", "last_probed_at", "updated_at")
 
 def sanitize_router(doc: dict, user: dict | None = None) -> dict:
     out = {k: doc[k] for k in MANAGED_PUBLIC_FIELDS if k in doc}
@@ -198,7 +207,7 @@ async def overview(request: Request, user: dict = Depends(require("overview", "r
         routers.append(row)
     workspace = await db.workspaces.find_one({"id": ws}, {"_id": 0})
     alarms = await db.alarm_log.find({"workspace_id": ws}, {"_id": 0}).sort("created_at", -1).to_list(20)
-    return {"workspace": workspace, "routers": routers, "groups": await groups_for(ws, user), "traffic": DEMO_TRAFFIC, "alarms": alarms}
+    return {"workspace": workspace, "routers": routers, "groups": await groups_for(ws, user), "alarms": alarms}
 
 @api.post("/monitoring/probe-all")
 async def probe_all(request: Request, user: dict = Depends(require("routers", "read"))):
@@ -293,8 +302,8 @@ async def read_resource(router_id: str, resource: str, request: Request, reveal:
     try: items = await asyncio.to_thread(ros_call, router, user["user_id"], creds, RESOURCE_PATHS[resource])
     except Exception as exc: raise ros_http_error(exc, router, "read")
     redacted = False
-    if resource == "ppp-secrets" and not reveal:
-        items = [{**row, **{field: REDACTED_PLACEHOLDER for field in PPP_SECRET_SENSITIVE if field in row}} for row in items]
+    if resource in SENSITIVE_FIELDS and not reveal:
+        items = [{**row, **{field: REDACTED_PLACEHOLDER for field in SENSITIVE_FIELDS[resource] if field in row}} for row in items]
         redacted = True
     return {"resource": resource, "items": items, "redacted": redacted, "writable": sorted(WRITE_COMMANDS.get(resource, set())) if level_of(user, "ros_config") >= 2 else []}
 
@@ -392,12 +401,6 @@ async def backup_delete(backup_id: str, request: Request, user: dict = Depends(r
     await audit(user, "backup.delete", doc["router_id"], doc["filename"])
     return {"ok": True, "id": backup_id}
 
-@api.post("/routers/{router_id}/backup-schedule")
-async def save_schedule(router_id: str, schedule: ScheduleRequest, request: Request, user: dict = Depends(require("backups", "write"))):
-    await visible_router(router_id, request, user)
-    await db.backup_schedules.update_one({"router_id": router_id}, {"$set": {**schedule.model_dump(), "router_id": router_id}}, upsert=True)
-    return {"ok": True, "schedule": schedule.model_dump()}
-
 
 # ---------- audit ----------
 @api.get("/audit")
@@ -462,18 +465,26 @@ async def test_telegram_config(role_id: str, user: dict = Depends(require("notif
     result = await telegram_send(token, role["telegram"]["chat_id"], format_alarm("test", "NetPulse control plane", f"Telegram delivery verified for role {role['name']}"))
     return {"ok": True, "message_id": result.get("result", {}).get("message_id")}
 
+async def deliver_alarm(router: dict, kind: str, detail: str, source: str = "auto") -> list[str]:
+    """Send an alarm to the Telegram channel of every role that covers this router's group, then log it."""
+    roles = await db.roles.find({"group_ids": router.get("group_id"), "telegram.enabled": True}, {"_id": 0}).to_list(200)
+    text = format_alarm(kind, router.get("name", "router"), detail); sent = []
+    for role in roles:
+        try:
+            token = credential_box().decrypt(role["telegram"]["token_enc"].encode()).decode()
+            await telegram_send(token, role["telegram"]["chat_id"], text)
+            sent.append(role["name"])
+        except Exception: continue
+    await db.alarm_log.insert_one({"id": f"alm-{uuid.uuid4().hex[:8]}", "workspace_id": router.get("workspace_id"), "router_id": router["id"], "router_name": router.get("name"),
+                                   "group_id": router.get("group_id"), "kind": kind, "detail": detail, "roles_notified": sent, "source": source,
+                                   "created_at": datetime.now(timezone.utc).isoformat()})
+    return sent
+
 @api.post("/alarms/dispatch")
 async def dispatch_alarm(alarm: AlarmDispatch, request: Request, user: dict = Depends(require("alarms", "write"))):
     router = await visible_router(alarm.router_id, request, user)
-    roles = await db.roles.find({"group_ids": router.get("group_id"), "telegram.enabled": True}, {"_id": 0}).to_list(200)
-    if not roles: raise HTTPException(409, "No role with Telegram enabled has access to this router's group")
-    text = format_alarm(alarm.kind, router["name"], alarm.detail); sent = []
-    for role in roles:
-        token = credential_box().decrypt(role["telegram"]["token_enc"].encode()).decode()
-        try: await telegram_send(token, role["telegram"]["chat_id"], text); sent.append(role["name"])
-        except HTTPException: continue
-    await db.alarm_log.insert_one({"id": f"alm-{uuid.uuid4().hex[:8]}", "workspace_id": router["workspace_id"], "router_id": router["id"], "router_name": router["name"], "group_id": router.get("group_id"), "kind": alarm.kind, "detail": alarm.detail, "roles_notified": sent, "created_at": datetime.now(timezone.utc).isoformat()})
-    return {"ok": True, "roles_notified": sent}
+    if not await db.roles.find_one({"group_ids": router.get("group_id"), "telegram.enabled": True}): raise HTTPException(409, "No role with Telegram enabled has access to this router's group")
+    return {"ok": True, "roles_notified": await deliver_alarm(router, alarm.kind, alarm.detail, source="manual")}
 
 
 # ---------- terminal (RouterOS command line over API) ----------
@@ -555,8 +566,13 @@ async def startup():
         await asyncio.to_thread(init_storage)
     except Exception as exc: print(f"[storage] init failed: {exc}")
 
+from engine import engine_router
+from sshterm import ssh_router
+
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(engine_router)
+app.include_router(ssh_router)
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","), allow_methods=["*"], allow_headers=["*"])
 

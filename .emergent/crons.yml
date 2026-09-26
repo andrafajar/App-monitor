@@ -1,0 +1,15 @@
+crons:
+  - name: alarm-scan
+    description: "Probes every managed router and pushes CPU, interface-down and unreachable alarms to role Telegram"
+    cron: "*/15 * * * *"
+    endpoint: "{{BASE_URL}}/api/cron/alarm-scan"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
+  - name: backup-scan
+    description: "Runs due scheduled .rsc router backups and stores them in object storage"
+    cron: "*/15 * * * *"
+    endpoint: "{{BASE_URL}}/api/cron/backup-scan"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

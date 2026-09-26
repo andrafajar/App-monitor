@@ -4,7 +4,6 @@ import {
   Activity, AlertTriangle, Bell, Building2, ChevronDown, ChevronRight, CircleGauge, Database, Ellipsis, LayoutDashboard,
   Loader2, LogOut, Menu, Network, Pencil, Plus, RefreshCw, Router, Save, Search, Settings2, ShieldCheck, SlidersHorizontal, Trash2, UserCog, Users, Wifi, X
 } from "lucide-react";
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "@/App.css";
 import { api, errorText, slug } from "@/lib/api";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
@@ -19,6 +18,8 @@ import NotificationsPanel from "@/pages/NotificationsPanel";
 import { Modal } from "@/components/Modal";
 import { Status } from "@/components/Status";
 import { WorkspacePage } from "@/components/RouterWorkspace";
+import { AggregateTrafficChart } from "@/components/TrafficPanel";
+import AlarmSettings from "@/pages/AlarmSettings";
 
 const EMPTY = { workspace: null, routers: [], groups: [], traffic: [], alarms: [] };
 const NAV = [
@@ -36,15 +37,15 @@ function Metric({ icon: Icon, label, value, detail, tone = "cyan" }) {
 }
 
 function AddRouterModal({ open, onClose, groups, onCreated, onNotice, editing, canEditCreds }) {
-  const blank = { name: "", host: "", port: "8728", username: "", password: "", group_id: groups?.[0]?.id || "", description: "" };
+  const blank = { name: "", host: "", port: "8728", ssh_port: "22", username: "", password: "", group_id: groups?.[0]?.id || "", description: "" };
   const [form, setForm] = useState(blank);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) setForm(editing ? { name: editing.name, host: editing.host, port: String(editing.port || 8728), username: editing.username || "", password: "", group_id: editing.group_id || "", description: editing.description || "" } : blank); }, [open, editing]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) setForm(editing ? { name: editing.name, host: editing.host, port: String(editing.port || 8728), ssh_port: String(editing.ssh_port || 22), username: editing.username || "", password: "", group_id: editing.group_id || "", description: editing.description || "" } : blank); }, [open, editing]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);
-    const body = { name: form.name.trim(), host: form.host.trim(), port: parseInt(form.port, 10) || 8728, username: form.username.trim(), group_id: form.group_id, description: form.description.trim() };
+    const body = { name: form.name.trim(), host: form.host.trim(), port: parseInt(form.port, 10) || 8728, ssh_port: parseInt(form.ssh_port, 10) || 22, username: form.username.trim(), group_id: form.group_id, description: form.description.trim() };
     try {
       if (editing) {
         if (form.password) body.password = form.password;
@@ -67,6 +68,9 @@ function AddRouterModal({ open, onClose, groups, onCreated, onNotice, editing, c
       <label>Host / IP<input required value={form.host} onChange={e => set("host", e.target.value)} placeholder="10.10.0.1" data-testid="add-router-host" /></label>
       <div className="two-col">
         <label>API port<select value={form.port} onChange={e => set("port", e.target.value)} data-testid="add-router-port"><option value="8728">8728 · plaintext</option><option value="8729">8729 · api-ssl</option></select></label>
+        <label>SSH port (terminal)<input type="number" min={1} max={65535} value={form.ssh_port} onChange={e => set("ssh_port", e.target.value)} placeholder="22" data-testid="add-router-ssh-port" /></label>
+      </div>
+      <div className="two-col">
         <label>Group<select required value={form.group_id} onChange={e => set("group_id", e.target.value)} data-testid="add-router-group"><option value="">— select group —</option>{groups.map(g => <option key={g.id} value={g.id}>{g.path}</option>)}</select></label>
       </div>
       {!credsLocked && <>
@@ -108,6 +112,8 @@ function Shell() {
   const [groupModal, setGroupModal] = useState(false);
   const [groupSettings, setGroupSettings] = useState(null);
   const [wsMenu, setWsMenu] = useState(false);
+  const [alarmOpen, setAlarmOpen] = useState(false);
+  const [traffic, setTraffic] = useState({ series: [], per_router: [], live: false, totals: { inbound: 0, outbound: 0 } });
   const [workspaces, setWorkspaces] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -123,6 +129,14 @@ function Shell() {
   }, [data.routers.length]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!notice) return; const t = setTimeout(() => setNotice(""), 4200); return () => clearTimeout(t); }, [notice]);
   useEffect(() => { if (selected) { const fresh = data.routers.find(r => r.id === selected.id); if (fresh) setSelected(fresh); } }, [data.routers]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (active !== "Overview" || !user.workspace_ids?.length) return;
+    let alive = true;
+    const sample = async () => { try { const r = await api.get("/monitoring/traffic"); if (alive) setTraffic(r.data); } catch { /* ignore */ } };
+    sample();
+    const t = setInterval(sample, 20000);
+    return () => { alive = false; clearInterval(t); };
+  }, [active, workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openWorkspace = (r) => { setSelected(r); setActive("Workspace"); const url = new URL(window.location.href); url.searchParams.set("router", r.id); window.history.replaceState({}, "", url.toString()); };
   const closeWorkspace = () => { setSelected(null); setActive("Overview"); const url = new URL(window.location.href); url.searchParams.delete("router"); url.searchParams.delete("cat"); window.history.replaceState({}, "", url.toString()); };
@@ -140,7 +154,7 @@ function Shell() {
     Overview: <>{canWriteRouters && <button className="button primary" onClick={() => { setEditing(null); setAddOpen(true); }} data-testid="add-router-button"><Plus size={16} />Add router</button>}</>,
     Routers: canWriteRouters && <button className="button primary" onClick={() => { setEditing(null); setAddOpen(true); }} data-testid="add-router-button"><Plus size={16} />Add router</button>,
     "Groups & Tenants": can("groups", "write") && <button className="button primary" onClick={() => setGroupModal(true)} data-testid="add-group-button"><Plus size={16} />Add group</button>,
-    Alarms: can("alarms", "write") && <button className="button primary" onClick={() => setNotice("Alarm rules editor coming next")} data-testid="new-alarm-rule-button"><Plus size={16} />New rule</button>,
+    Alarms: can("alarms", "write") && <button className="button primary" onClick={() => setAlarmOpen(true)} data-testid="new-alarm-rule-button"><Plus size={16} />Alarm rules</button>,
   };
   const currentWs = workspaces.find(w => w.id === workspaceId);
   const noAccess = !user.workspace_ids?.length;
@@ -183,7 +197,8 @@ function Shell() {
         {active === "Audit log" && <AuditView />}
         {!noAccess && (active === "Overview" || active === "Routers") && <>
           <div className="metrics-grid"><Metric icon={Router} label="Total routers" value={data.routers.length} detail={`${online} online · ${data.routers.length - online} offline`} /><Metric icon={CircleGauge} label="Network health" value={data.routers.length ? `${Math.round(online * 100 / data.routers.length)}%` : "—"} detail="routers reachable via API" tone="green" /><Metric icon={Users} label="Device groups" value={data.groups.length} detail={`in ${currentWs?.name || "workspace"}`} tone="violet" /><Metric icon={AlertTriangle} label="Recent alarms" value={String(data.alarms.length).padStart(2, "0")} detail="last 20 dispatched" tone="amber" /></div>
-          {active === "Overview" && <div className="main-grid"><section className="panel traffic-panel"><div className="panel-head"><div><p className="eyebrow">BANDWIDTH TELEMETRY · SAMPLE</p><h2>Aggregate traffic</h2></div></div><div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.traffic}><defs><linearGradient id="inbound" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#38bdf8" stopOpacity=".30" /><stop offset="100%" stopColor="#38bdf8" stopOpacity="0" /></linearGradient><linearGradient id="outbound" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#a78bfa" stopOpacity=".2" /><stop offset="100%" stopColor="#a78bfa" stopOpacity="0" /></linearGradient></defs><XAxis dataKey="time" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={32} /><Tooltip contentStyle={{ background: "#111827", border: "1px solid #26344b", borderRadius: 6, color: "#f8fafc" }} /><Area type="monotone" dataKey="inbound" stroke="#38bdf8" fill="url(#inbound)" strokeWidth={2} /><Area type="monotone" dataKey="outbound" stroke="#a78bfa" fill="url(#outbound)" strokeWidth={2} /></AreaChart></ResponsiveContainer></div></section>
+          {active === "Overview" && <div className="main-grid"><section className="panel traffic-panel"><div className="panel-head"><div><p className="eyebrow" data-testid="traffic-eyebrow">BANDWIDTH TELEMETRY · {traffic.live ? "LIVE FROM ROUTEROS" : "SAMPLING…"}</p><h2>Aggregate traffic</h2></div><div className="traffic-now" data-testid="traffic-now"><span>↓ {(traffic.totals?.inbound ?? 0).toFixed(2)} Mbps</span><span>↑ {(traffic.totals?.outbound ?? 0).toFixed(2)} Mbps</span></div></div>
+            {traffic.series?.length ? <AggregateTrafficChart data={traffic.series} /> : <div className="drawer-message" data-testid="traffic-warming"><Activity size={16} />{data.routers.length ? "Reading interface byte counters from every reachable router — the first live point lands within 20 seconds." : "Add a router to start live bandwidth sampling."}</div>}</section>
             <section className="panel alarm-panel"><div className="panel-head"><div><p className="eyebrow">SIGNAL CENTER</p><h2>Recent alarms</h2></div><button className="text-btn" onClick={() => show("Alarms")} data-testid="view-all-alarms-button">View all <ChevronRight size={14} /></button></div><div className="alarm-list">{data.alarms.length === 0 && <div className="drawer-message"><Bell size={16} />No alarms yet.</div>}{data.alarms.slice(0, 3).map(a => <div key={a.id} className="alarm-item info"><div className="alarm-symbol"><AlertTriangle size={16} /></div><div><b>{a.kind}</b><span>{a.router_name}</span><small>{new Date(a.created_at).toLocaleString()}</small></div></div>)}</div></section></div>}
           <section className="panel routers-panel"><div className="panel-head table-head"><div><p className="eyebrow">INVENTORY / {data.routers.length} DEVICES</p><h2>Router fleet</h2></div><div className="table-tools"><div className="search"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter routers..." data-testid="router-search-input" /></div><select value={group} onChange={e => setGroup(e.target.value)} data-testid="router-group-filter"><option value="">All routers</option>{data.groups.map(g => <option key={g.id} value={g.id}>{g.path}</option>)}</select></div></div>
             <div className="table-wrap"><table><thead><tr><th>ROUTER</th><th>GROUP</th><th>STATUS</th><th>CPU</th><th>MEMORY</th><th>VERSION</th><th>UPTIME</th><th></th></tr></thead><tbody>
@@ -195,6 +210,7 @@ function Shell() {
       </section>
     </main>
     <AddRouterModal open={addOpen} editing={editing} canEditCreds={!editing || user.is_super_admin || editing.created_by === user.user_id} onClose={() => { setAddOpen(false); setEditing(null); }} groups={data.groups} onCreated={(updated) => { if (updated && selected?.id === updated.id) setSelected(s => ({ ...s, ...updated })); loadOverview(); }} onNotice={setNotice} />
+    <AlarmSettings open={alarmOpen} onClose={() => setAlarmOpen(false)} onNotice={setNotice} />
     {groupSettings && <GroupSettings group={data.groups.find(g => g.id === groupSettings.id) || groupSettings} groups={data.groups} onClose={() => setGroupSettings(null)} onNotice={setNotice} onChanged={loadOverview} onOpenNotifications={() => { setGroupSettings(null); show("Settings"); }} onOpenRouter={(id) => { const r = data.routers.find(x => x.id === id); if (r) { setGroupSettings(null); openWorkspace(r); } }} />}
   </div>;
 }

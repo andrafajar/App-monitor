@@ -82,3 +82,15 @@
 .term-in{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--line);background:#0b1220;color:#38bdf8}
 .term-prompt{font-family:'DM Mono',monospace;font-size:11px;color:#7dd3fc;white-space:nowrap}
 .term-in input{flex:1;background:transparent;border:0;color:#f8fafc;font-family:'DM Mono',monospace;font-size:12px;outline:0}
+/* live traffic + ssh terminal */
+.chart-sm{height:168px;padding:6px 10px 10px 0}
+.traffic-now{display:flex;gap:14px;font-family:'DM Mono',monospace;font-size:11px;color:#7dd3fc}
+.traffic-now span{background:#0d2437;border:1px solid #1d4a68;padding:4px 9px;border-radius:4px}
+.ssh-wrap{display:flex;flex-direction:column;gap:10px}
+.ssh-host{height:min(58vh,520px);background:#080d16;border:1px solid var(--line);border-radius:6px;padding:10px 6px 6px 12px;overflow:hidden}
+.ssh-host .xterm{height:100%}
+.ws-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.ws-dot.on{background:#4ade80;box-shadow:0 0 8px #4ade80}
+.ws-dot.off{background:#64748b}
+.row-disabled{opacity:.55}
+

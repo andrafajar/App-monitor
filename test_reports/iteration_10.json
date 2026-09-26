@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 10 fully validated the NEW Edit-router feature (PUT /api/routers/{id} + pencil buttons + shared modal in edit mode + ws-edit-router + description field). Backend: 7/7 pytest passed in test_router_update.py — POST temp router; PUT with new name/host/port/username/group/description and no password → 200, all fields reflected, no password/password_enc in response and GET /api/routers shows updates; PUT with password field also 200; PUT unknown id → 404; PUT name='a' → 422; PUT description length 201 → 422; PUT invalid port → 422. Real-router preservation test: PUT mr-65920574 with current values (blank password) + description 'QA edit check' returned probe.status='online' (proves stored password preserved through Fernet on blank), then restored description=''. Frontend E2E on public URL: pencil router-edit-mr-65920574 present, r-01 has no pencil; clicking pencil opens edit-router-modal (no workspace), prefilled name='IDC MONITORING', host='103.102.13.4', port='8728', username non-empty ('patrick'), password empty with placeholder 'Leave blank to keep current password', submit label 'Save changes'; cancel closes. Submit with description='QA desc' → toast 'IDC MONITORING updated · connection OK', fleet row shows QA desc under host, workspace subtitle contains QA desc, ws-edit-router opens modal prefilled with QA desc; clearing description and saving → subtitle no longer has 'QA desc'. Add router modal regression: title 'Add MikroTik router', submit 'Save router', password required, Description field present. Groups & Tenants Add group button still there. Real router host/port/username/password never changed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_router_update.py",
+    "/app/test_reports/pytest/iteration10_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py line 231-241 update_router: after $set of update dict and re-probing, does a second $set only for probe fields — could be a single write. Minor; not a bug.",
+    "server.py RouterUpdate has no telegram_chat_id field (RouterCreate does). If a router had one at creation, it is preserved (only $set of provided fields), but there's no way to edit it via the UI. Consider adding to the model when Telegram-per-router routing is exposed.",
+    "AddRouterModal password field uses type='password' and placeholder text is visible only when empty — good; but `required={!editing}` means a browser 'required' validation won't fire in edit mode even if the user WANTS to change it (they can just leave blank). Working as designed but worth documenting.",
+    "App.js is now ~530 lines; still no split into feature components. Line 522 (fleet table row) is a 700+ char JSX single-liner — hard to review.",
+    "openEdit(r) doesn't validate r.id starts with 'mr-'; safe today since UI only renders pencil for mr- rows, but a stray call from elsewhere could open editor for a demo router (backend would 404 on submit).",
+    "The edit modal shares data-testid pattern with add-router-* fields; tests can only differentiate mode via container testid 'edit-router-modal' vs 'add-router-modal'. Fine, but the submit button testid is identical ('add-router-submit') in both modes."
+  ],
+  "updated_files": ["/app/backend/tests/test_router_update.py"],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (all acceptance checks in review request passed)"},
+  "test_credentials": "No auth in app. mr-65920574 (IDC MONITORING, host 103.102.13.4) preserved.",
+  "seed_data_creation": "Temp router TEST_EditTargetRenamed (mr-…) created & deleted by pytest fixture. Real router description toggled 'QA desc' → '' and left empty at end of run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration-10 (Edit router) FULLY PASS. New backend suite /app/backend/tests/test_router_update.py (7 tests) covers create-then-edit, no-password preservation on real router, 404, 422 validations. Toast auto-dismisses at 4.2s — use wait_for_selector('[data-testid=\"notification-toast\"]') immediately after submit, don't sleep first. Real router mr-65920574 must never be deleted, host/port/username/password must never be changed. Iteration-9 groups & workspace features still intact.",
+  "rca_of_the_issue": "N/A — no bugs found."
+}

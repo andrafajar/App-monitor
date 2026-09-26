@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link2, Loader2, Plus, RefreshCw, Router, Trash2 } from "lucide-react";
+import { Link2, Loader2, Pencil, Plus, RefreshCw, Router, Trash2 } from "lucide-react";
 import { api, errorText } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 
@@ -7,17 +7,23 @@ const NODE_W = 150, NODE_H = 58;
 const center = (n) => ({ x: n.x + NODE_W / 2, y: n.y + NODE_H / 2 });
 const rate = (l) => (l.rx_mbps || l.tx_mbps ? `${(l.rx_mbps || 0).toFixed(1)}↓ / ${(l.tx_mbps || 0).toFixed(1)}↑ Mbps` : "");
 
-function LinkModal({ open, onClose, devices, onDone, onNotice }) {
+function LinkModal({ open, onClose, devices, editing, onDone, onNotice }) {
   const [form, setForm] = useState({ a_device: "", a_iface: "", b_device: "", b_iface: "", label: "" });
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) setForm({ a_device: "", a_iface: "", b_device: "", b_iface: "", label: "" }); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    setForm(editing ? { a_device: editing.a_device, a_iface: editing.a_iface, b_device: editing.b_device, b_iface: editing.b_iface, label: editing.label || "" }
+      : { a_device: "", a_iface: "", b_device: "", b_iface: "", label: "" });
+  }, [open, editing]);
   if (!open) return null;
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const ifacesOf = (id) => devices.find(d => d.device_id === id)?.interfaces || [];
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);
-    try { await api.post("/topology/links", form); onNotice("Link added to the map"); onDone(); onClose(); }
-    catch (err) { onNotice(errorText(err, "Could not create the link")); }
+    try {
+      if (editing) await api.put(`/topology/links/${editing.id}`, form); else await api.post("/topology/links", form);
+      onNotice(editing ? "Link updated" : "Link added to the map"); onDone(); onClose();
+    } catch (err) { onNotice(errorText(err, "Could not save the link")); }
     finally { setBusy(false); }
   };
   const side = (key) => <>
@@ -30,14 +36,14 @@ function LinkModal({ open, onClose, devices, onDone, onNotice }) {
       {ifacesOf(form[`${key}_device`]).map(i => <option key={i.name} value={i.name}>{`${i.name} · ${i.status}`}</option>)}
     </select></label>
   </>;
-  return <Modal open={open} onClose={onClose} title="Connect two interfaces" eyebrow="TOPOLOGY · MANUAL LINK" hint="Endpoints come from the last SNMP sweep of each device — run “Scan now” in the device SNMP tab if a list is empty." testid="topology-link-modal">
+  return <Modal open={open} onClose={onClose} title={editing ? "Edit link" : "Connect two interfaces"} eyebrow={editing ? `TOPOLOGY · ${editing.id}` : "TOPOLOGY · MANUAL LINK"} hint="Endpoints come from the last SNMP sweep of each device — run “Scan now” in the device SNMP tab if a list is empty." testid="topology-link-modal">
     <form onSubmit={submit} className="add-form">
       <div className="two-col">{side("a")}</div>
       <div className="two-col">{side("b")}</div>
       <label>Label (optional)<input maxLength={60} value={form.label} onChange={e => set("label", e.target.value)} placeholder="Metro-E 1 Gbps" data-testid="link-label" /></label>
       <div className="modal-actions">
         <button type="button" className="button secondary" onClick={onClose} data-testid="link-cancel">Cancel</button>
-        <button type="submit" className="button primary" disabled={busy} data-testid="link-submit"><Link2 size={14} />{busy ? "Saving…" : "Add link"}</button>
+        <button type="submit" className="button primary" disabled={busy} data-testid="link-submit"><Link2 size={14} />{busy ? "Saving…" : editing ? "Save link" : "Add link"}</button>
       </div>
     </form>
   </Modal>;
@@ -47,6 +53,7 @@ export function TopologyMap({ data, readOnly = false, onNotice, canEdit = false 
   const [map, setMap] = useState(data || null);
   const [picker, setPicker] = useState(null);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [editingLink, setEditingLink] = useState(null);
   const [drag, setDrag] = useState(null);
   const canvas = useRef(null);
 
@@ -91,7 +98,7 @@ export function TopologyMap({ data, readOnly = false, onNotice, canEdit = false 
   return <Root className={readOnly ? "topo-readonly" : "panel topo-panel"} data-testid="topology-map">
     {!readOnly && <div className="panel-head"><div><p className="eyebrow">TOPOLOGY · {map.links.length} LINKS · DRAG TO ARRANGE</p><h2>Network map</h2></div>      <div className="res-tools">
         <button className="icon-btn" onClick={load} title="Reload" data-testid="topology-reload"><RefreshCw size={15} /></button>
-        {canEdit && <button className="button primary compact" onClick={() => setLinkOpen(true)} data-testid="topology-add-link"><Plus size={13} />Add link</button>}
+        {canEdit && <button className="button primary compact" onClick={() => { setEditingLink(null); setLinkOpen(true); }} data-testid="topology-add-link"><Plus size={13} />Add link</button>}
       </div></div>}
     <div className="topo-canvas" ref={canvas} style={{ height }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} data-testid="topology-canvas">
       <svg className="topo-links" width="100%" height={height}>
@@ -99,7 +106,7 @@ export function TopologyMap({ data, readOnly = false, onNotice, canEdit = false 
           const a = nodeById[l.a_device], b = nodeById[l.b_device];
           if (!a || !b) return null;
           const p1 = center(a), p2 = center(b);
-          return <g key={l.id} className={`topo-link ${l.status}`}>
+          return <g key={l.id} className={`topo-link ${l.status}`} onClick={() => { if (!readOnly && canEdit) { setEditingLink(l); setLinkOpen(true); } }} style={{ pointerEvents: readOnly || !canEdit ? "none" : "stroke" }} data-testid={`topo-edge-${l.id}`}>
             <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} />
             <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 8} textAnchor="middle">{l.label || `${l.a_iface} ↔ ${l.b_iface}`}</text>
             <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 + 12} textAnchor="middle" className="topo-rate">{rate(l)}</text>
@@ -115,9 +122,10 @@ export function TopologyMap({ data, readOnly = false, onNotice, canEdit = false 
       {map.links.length === 0 && <span className="muted">No links yet — press “Add link” and pick an SNMP-scanned interface on both devices.</span>}
       {map.links.map(l => <span key={l.id} className={`tg-pill ${l.status === "up" ? "on" : "off"}`} data-testid={`topo-link-${l.id}`}>
         {nodeById[l.a_device]?.name} {l.a_iface} ↔ {nodeById[l.b_device]?.name} {l.b_iface}
+        {canEdit && <button className="icon-btn" onClick={() => { setEditingLink(l); setLinkOpen(true); }} title="Edit link" data-testid={`topo-link-edit-${l.id}`}><Pencil size={12} /></button>}
         {canEdit && <button className="icon-btn" onClick={() => removeLink(l.id)} title="Remove link" data-testid={`topo-link-remove-${l.id}`}><Trash2 size={12} /></button>}
       </span>)}
     </div>}
-    {!readOnly && <LinkModal open={linkOpen} onClose={() => setLinkOpen(false)} devices={picker || []} onDone={load} onNotice={onNotice} />}
+    {!readOnly && <LinkModal open={linkOpen} onClose={() => { setLinkOpen(false); setEditingLink(null); }} devices={picker || []} editing={editingLink} onDone={load} onNotice={onNotice} />}
   </Root>;
 }

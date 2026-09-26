@@ -36,6 +36,13 @@ class RecordIn(BaseModel):
     interfaces: list[str] = Field(default_factory=list, max_length=200)
 
 
+class ThresholdIn(BaseModel):
+    enabled: bool = False
+    rx_mbps: float = Field(0, ge=0, le=100000)
+    tx_mbps: float = Field(0, ge=0, le=100000)
+    loss_pct: int = Field(0, ge=0, le=100)
+
+
 # ---------- SNMP v2c ----------
 def community_of(device: dict) -> str | None:
     enc = device.get("snmp_community_enc")
@@ -130,6 +137,7 @@ async def poll_snmp(device: dict) -> dict:
     try:
         system = await snmp_get(host, port, community, SYS_OIDS)
         names = await snmp_walk(host, port, community, WALK_OIDS["name"])
+        aliases = await snmp_walk(host, port, community, WALK_OIDS["alias"])
         status = await snmp_walk(host, port, community, WALK_OIDS["status"])
         inbound = await snmp_walk(host, port, community, WALK_OIDS["in64"]) or await snmp_walk(host, port, community, WALK_OIDS["in32"])
         outbound = await snmp_walk(host, port, community, WALK_OIDS["out64"]) or await snmp_walk(host, port, community, WALK_OIDS["out32"])
@@ -147,7 +155,8 @@ async def poll_snmp(device: dict) -> dict:
         rx, tx = as_int(inbound.get(index)), as_int(outbound.get(index))
         counters[index] = {"rx": rx, "tx": tx}
         before = prev_counters.get(index) or {}
-        interfaces.append({"index": index, "name": name, "status": "up" if status.get(index) == "up" or as_int(status.get(index)) == 1 else "down",
+        interfaces.append({"index": index, "name": name, "alias": (aliases.get(index) or "").strip()[:60],
+                           "status": "up" if status.get(index) == "up" or as_int(status.get(index)) == 1 else "down",
                            "rx_mbps": rate_mbps(before.get("rx", 0), rx, elapsed) if before else None,
                            "tx_mbps": rate_mbps(before.get("tx", 0), tx, elapsed) if before else None,
                            "rx_total": rx, "tx_total": tx})
@@ -210,6 +219,8 @@ async def monitor_device(device: dict, settings: dict) -> list[str]:
                                         "tx_mbps": round(sum(i["tx_mbps"] or 0 for i in snmp.get("interfaces") or []), 2) if snmp.get("interfaces") else None})
     if snmp.get("interfaces"):
         keep = set(await sync_registry(device, snmp["interfaces"]))
+        if settings.get("enabled"):
+            fired.extend(await check_thresholds(device, snmp["interfaces"], keep, ping, settings))
         rows = [{"device_id": device["id"], "iface": i["name"], "created_at": now(), "status": i["status"],
                  "rx_mbps": i["rx_mbps"], "tx_mbps": i["tx_mbps"]} for i in snmp["interfaces"] if i["name"] in keep and i["rx_mbps"] is not None]
         if rows: await db.iface_metrics.insert_many(rows)
@@ -231,6 +242,24 @@ async def monitor_device(device: dict, settings: dict) -> list[str]:
                 await deliver_alarm(device, "interface-status", ", ".join(changes[:6]) + " (SNMP)")
                 fired.append("interface-status")
     return fired
+
+
+async def check_thresholds(device: dict, interfaces: list[dict], recorded: set[str], ping: dict, settings: dict) -> list[str]:
+    """Telegram warning when a recorded interface crosses its bandwidth limit or the device exceeds the loss limit."""
+    from engine import recently_fired
+    from server import deliver_alarm
+    cfg = device.get("snmp_thresholds") or {}
+    if not cfg.get("enabled"): return []
+    rx_limit, tx_limit, loss_limit = float(cfg.get("rx_mbps") or 0), float(cfg.get("tx_mbps") or 0), int(cfg.get("loss_pct") or 0)
+    breaches = []
+    for row in interfaces:
+        if row["name"] not in recorded: continue
+        if rx_limit and (row.get("rx_mbps") or 0) > rx_limit: breaches.append(f"{row['name']} rx {row['rx_mbps']} Mbps > {rx_limit}")
+        if tx_limit and (row.get("tx_mbps") or 0) > tx_limit: breaches.append(f"{row['name']} tx {row['tx_mbps']} Mbps > {tx_limit}")
+    if loss_limit and (ping.get("loss") or 0) >= loss_limit: breaches.append(f"packet loss {ping['loss']}% >= {loss_limit}%")
+    if not breaches or await recently_fired(device["id"], "threshold", settings.get("throttle_minutes", 30)): return []
+    await deliver_alarm(device, "threshold", "; ".join(breaches[:6]))
+    return ["threshold"]
 
 
 async def purge_history() -> dict:
@@ -264,7 +293,11 @@ async def visible_device(device_id: str, request: Request, user: dict) -> dict:
 def snmp_public(device: dict) -> dict:
     return {"enabled": bool(device.get("snmp_enabled")), "port": int(device.get("snmp_port") or 161),
             "configured": bool(device.get("snmp_community_enc")), "version": "2c",
-            "record_mode": device.get("snmp_watch_mode") or "auto", "recorded": device.get("snmp_watch_interfaces") or []}
+            "record_mode": device.get("snmp_watch_mode") or "auto", "recorded": device.get("snmp_watch_interfaces") or [],
+            "thresholds": {"enabled": bool((device.get("snmp_thresholds") or {}).get("enabled")),
+                           "rx_mbps": (device.get("snmp_thresholds") or {}).get("rx_mbps", 0),
+                           "tx_mbps": (device.get("snmp_thresholds") or {}).get("tx_mbps", 0),
+                           "loss_pct": (device.get("snmp_thresholds") or {}).get("loss_pct", 0)}}
 
 
 @monitor_router.get("/devices/{device_id}/snmp")
@@ -343,6 +376,17 @@ async def interface_history(device_id: str, iface: str, hours: int = 24, request
             "peak": {"rx_mbps": max([s["rx_mbps"] for s in series], default=0), "tx_mbps": max([s["tx_mbps"] for s in series], default=0)},
             "average": {"rx_mbps": round(sum(s["rx_mbps"] for s in series) / len(series), 3) if series else 0,
                         "tx_mbps": round(sum(s["tx_mbps"] for s in series) / len(series), 3) if series else 0}}
+
+
+@monitor_router.put("/devices/{device_id}/snmp/thresholds")
+async def put_thresholds(device_id: str, body: ThresholdIn, request: Request, user: dict = Depends(require("routers", "write"))):
+    from server import audit
+    device = await visible_device(device_id, request, user)
+    if body.enabled and not (body.rx_mbps or body.tx_mbps or body.loss_pct): raise HTTPException(422, "Set at least one limit before enabling alerts")
+    update = {"snmp_thresholds": body.model_dump()}
+    await db.routers.update_one({"id": device_id}, {"$set": update})
+    await audit(user, "device.snmp-thresholds", device_id, f"{'on' if body.enabled else 'off'} rx>{body.rx_mbps} tx>{body.tx_mbps} loss>={body.loss_pct}%")
+    return {"ok": True, "config": snmp_public({**device, **update})}
 
 
 @monitor_router.get("/devices/{device_id}/snmp/diagnose")

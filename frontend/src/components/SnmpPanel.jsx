@@ -4,10 +4,12 @@ import { api, errorText } from "@/lib/api";
 
 const fmt = (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(2));
 
-export function SnmpPanel({ deviceId, deviceName, onNotice }) {
+export function SnmpPanel({ deviceId, deviceName, deviceType = "mikrotik", onNotice }) {
   const [state, setState] = useState(null);
   const [form, setForm] = useState({ enabled: false, community: "", port: "161" });
   const [record, setRecord] = useState({ mode: "auto", interfaces: [] });
+  const [limits, setLimits] = useState({ enabled: false, rx_mbps: "", tx_mbps: "", loss_pct: "" });
+  const [comments, setComments] = useState({});
   const [busy, setBusy] = useState("");
   const [diag, setDiag] = useState(null);
 
@@ -17,9 +19,18 @@ export function SnmpPanel({ deviceId, deviceName, onNotice }) {
       setState(r.data);
       setForm({ enabled: !!r.data.config.enabled, community: "", port: String(r.data.config.port || 161) });
       setRecord({ mode: r.data.config.record_mode || "auto", interfaces: r.data.config.recorded || [] });
+      const t = r.data.config.thresholds || {};
+      setLimits({ enabled: !!t.enabled, rx_mbps: t.rx_mbps || "", tx_mbps: t.tx_mbps || "", loss_pct: t.loss_pct || "" });
     } catch (e) { onNotice?.(errorText(e, "Could not read SNMP settings")); }
   }, [deviceId, onNotice]);
   useEffect(() => { load(); }, [load]);
+  // MikroTik: reuse the RouterOS interface comment as the alias when SNMP ifAlias is empty.
+  useEffect(() => {
+    if (deviceType !== "mikrotik") return;
+    api.get(`/routers/${deviceId}/resources/interfaces`)
+      .then(r => setComments(Object.fromEntries((r.data.items || []).filter(i => i.comment).map(i => [i.name, i.comment]))))
+      .catch(() => setComments({}));
+  }, [deviceId, deviceType]);
 
   const save = async (e) => {
     e.preventDefault(); setBusy("save");
@@ -39,6 +50,19 @@ export function SnmpPanel({ deviceId, deviceName, onNotice }) {
       onNotice?.(r.data.ok ? `SNMP sweep done · ${r.data.snmp.interfaces?.length || 0} interfaces` : `SNMP failed: ${r.data.snmp.error}`);
       await load();
     } catch (err) { onNotice?.(errorText(err, "SNMP scan failed")); }
+    finally { setBusy(""); }
+  };
+
+  const saveLimits = async (patch = {}) => {
+    const next = { enabled: limits.enabled, rx_mbps: Number(limits.rx_mbps) || 0, tx_mbps: Number(limits.tx_mbps) || 0, loss_pct: Number(limits.loss_pct) || 0, ...patch };
+    setBusy("limits");
+    try {
+      const r = await api.put(`/devices/${deviceId}/snmp/thresholds`, next);
+      const t = r.data.config.thresholds;
+      setLimits({ enabled: !!t.enabled, rx_mbps: t.rx_mbps || "", tx_mbps: t.tx_mbps || "", loss_pct: t.loss_pct || "" });
+      onNotice?.(t.enabled ? "Threshold alerts armed — breaches go to the Telegram roles of this device group"
+        : (t.rx_mbps || t.tx_mbps || t.loss_pct) ? "Limits saved — tick “Armed” to start alerting" : "Threshold alerts disabled");
+    } catch (err) { onNotice?.(errorText(err, "Could not save the thresholds")); }
     finally { setBusy(""); }
   };
 
@@ -63,7 +87,7 @@ export function SnmpPanel({ deviceId, deviceName, onNotice }) {
 
   if (!state) return <div className="res-loading"><Loader2 size={14} className="spin" />Loading monitoring state…</div>;
   const snmp = state.snmp || {};
-  const ifaces = snmp.interfaces || [];
+  const ifaces = (snmp.interfaces || []).map(i => ({ ...i, alias: i.alias || comments[i.name] || "" }));
 
   return <div className="snmp-wrap" data-testid="snmp-panel">
     <div className="snmp-stats">
@@ -105,7 +129,7 @@ export function SnmpPanel({ deviceId, deviceName, onNotice }) {
         {ifaces.length === 0 && <span className="muted">Run “Scan now” first to discover interfaces.</span>}
         {ifaces.map(i => <label key={i.name} className={`record-chip ${record.interfaces.includes(i.name) ? "on" : ""}`} data-testid={`record-iface-${i.name}`}>
           <input type="checkbox" checked={record.interfaces.includes(i.name)} disabled={record.mode === "auto" || busy === "record"} onChange={() => toggleIface(i.name)} />
-          {i.name}<small>{i.status}</small>
+          {i.name}<small>{i.alias || i.status}</small>
         </label>)}
       </div>
       {record.mode === "manual" && <div className="snmp-actions">
@@ -113,12 +137,25 @@ export function SnmpPanel({ deviceId, deviceName, onNotice }) {
         <button className="button secondary compact" onClick={() => setRecord(r => ({ ...r, interfaces: ifaces.map(i => i.name) }))} data-testid="record-all">Select all scanned</button>
       </div>}
     </div>
+    <div className="record-box" data-testid="snmp-thresholds">
+      <div className="record-head"><b>Threshold alerts (Telegram)</b>
+        <label className="ssl-toggle"><input type="checkbox" checked={limits.enabled} onChange={e => saveLimits({ enabled: e.target.checked })} disabled={busy === "limits"} data-testid="limit-enabled" /><span>Armed</span></label>
+      </div>
+      <p className="muted">A recorded interface crossing the bandwidth limit, or the device crossing the packet-loss limit, raises a “threshold” alarm for every role that can see this device group (throttled like the other alarms).</p>
+      <div className="card-builder-row">
+        <label>RX limit (Mbps)<input type="number" min={0} value={limits.rx_mbps} onChange={e => setLimits(l => ({ ...l, rx_mbps: e.target.value }))} placeholder="0 = off" data-testid="limit-rx" /></label>
+        <label>TX limit (Mbps)<input type="number" min={0} value={limits.tx_mbps} onChange={e => setLimits(l => ({ ...l, tx_mbps: e.target.value }))} placeholder="0 = off" data-testid="limit-tx" /></label>
+        <label>Packet loss (%)<input type="number" min={0} max={100} value={limits.loss_pct} onChange={e => setLimits(l => ({ ...l, loss_pct: e.target.value }))} placeholder="0 = off" data-testid="limit-loss" /></label>
+        <button className="button primary compact" onClick={() => saveLimits()} disabled={busy === "limits"} data-testid="limit-save"><Save size={13} />Save limits</button>
+      </div>
+    </div>
+
     <div className="res-table" data-testid="snmp-table">
       <table><thead><tr><th>IDX</th><th>INTERFACE</th><th>STATUS</th><th>RX Mbps</th><th>TX Mbps</th></tr></thead><tbody>
         {ifaces.length === 0 && <tr><td colSpan={5} className="res-empty">No interfaces scanned yet — enable SNMP and press “Scan now”.</td></tr>}
         {ifaces.map(i => <tr key={i.index} data-testid={`snmp-iface-${i.index}`}>
           <td className="mono">{i.index}</td>
-          <td><div className="router-name"><div className={`router-icon ${i.status === "up" ? "green" : "amber"}`}><Wifi size={13} /></div><div><b>{i.name}</b></div></div></td>
+          <td><div className="router-name"><div className={`router-icon ${i.status === "up" ? "green" : "amber"}`}><Wifi size={13} /></div><div><b>{i.name}</b>{i.alias ? <span>{i.alias}</span> : null}</div></div></td>
           <td><span className={`tg-pill ${i.status === "up" ? "on" : "off"}`}>{i.status}</span></td>
           <td className="mono">{fmt(i.rx_mbps)}</td><td className="mono">{fmt(i.tx_mbps)}</td>
         </tr>)}

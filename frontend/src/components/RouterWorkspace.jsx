@@ -164,7 +164,7 @@ export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, o
       </aside>
       <div className="ws-main" data-testid="ws-main">
         <div className="ws-cat-head"><p className="eyebrow">{cat === "SNMP" ? "SNMP V2C · PING & INTERFACE POLLING" : cat === "Interface Graphs" ? "SNMP HISTORY · 30 DAYS" : cat === "Backups" ? "OBJECT STORAGE · SNAPSHOTS & SCHEDULE" : cat === "Terminal (API)" ? "ROUTEROS API · COMMAND BRIDGE" : cat === "Terminal (SSH)" ? "ROUTEROS SHELL · SSH" : cat === "Terminal (Telnet)" ? "ROUTEROS SHELL · TELNET" : cat === "Traffic" ? "ROUTEROS API · LIVE BANDWIDTH" : "ROUTEROS API"} · {cat.toUpperCase()}</p><h2 data-testid="ws-cat-title">{cat}</h2></div>
-        {cat === "SNMP" ? <SnmpPanel deviceId={router.id} deviceName={router.name} onNotice={onNotice} />
+        {cat === "SNMP" ? <SnmpPanel deviceId={router.id} deviceName={router.name} deviceType={vendor} onNotice={onNotice} />
           : cat === "Interface Graphs" ? <InterfaceGraphs deviceId={router.id} deviceType={vendor} onNotice={onNotice} />
           : cat === "Backups" ? <BackupsPanel routerId={router.id} onNotice={onNotice} onGoSettings={onGoSettings} />
           : cat === "Traffic" ? <TrafficPanel routerId={router.id} onGoSettings={onGoSettings} />

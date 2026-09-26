@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Activity, Gauge, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Activity, Download, Gauge, Image, Loader2 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, errorText } from "@/lib/api";
 
@@ -7,14 +7,48 @@ const RANGES = [{ label: "Live", hours: 0 }, { label: "1 day", hours: 24 }, { la
 const LIVE_POINTS = 60;
 const stamp = (iso, hours) => new Date(iso).toLocaleString([], hours <= 24 ? { hour: "2-digit", minute: "2-digit" } : { day: "2-digit", month: "short", hour: "2-digit" });
 
+const download = (href, name) => { const a = document.createElement("a"); a.href = href; a.download = name; a.click(); };
+
+/** PNG export: serialise the chart SVG and paint it on a canvas (no extra dependency). */
+const svgToPng = (container, name) => {
+  const svg = container?.querySelector("svg");
+  if (!svg) return false;
+  const box = svg.getBoundingClientRect();
+  const clone = svg.cloneNode(true);
+  clone.setAttribute("width", box.width); clone.setAttribute("height", box.height);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  const blob = new Blob([`<svg xmlns="http://www.w3.org/2000/svg" width="${box.width}" height="${box.height}"><rect width="100%" height="100%" fill="#0b1220"/>${clone.innerHTML}</svg>`], { type: "image/svg+xml" });
+  const url = URL.createObjectURL(blob);
+  const img = new window.Image();
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = box.width * 2; canvas.height = box.height * 2;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(2, 2); ctx.drawImage(img, 0, 0);
+    download(canvas.toDataURL("image/png"), name);
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+  return true;
+};
+
 export function InterfaceGraphs({ deviceId, deviceType = "mikrotik", onNotice }) {
   const [ifaces, setIfaces] = useState([]);
   const [iface, setIface] = useState("");
   const [hours, setHours] = useState(24);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [comments, setComments] = useState({});
   const [live, setLive] = useState([]);
   const liveMode = hours === 0;
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (deviceType !== "mikrotik") return;
+    api.get(`/routers/${deviceId}/resources/interfaces`)
+      .then(r => setComments(Object.fromEntries((r.data.items || []).filter(i => i.comment).map(i => [i.name, i.comment]))))
+      .catch(() => setComments({}));
+  }, [deviceId, deviceType]);
 
   useEffect(() => {
     api.get(`/devices/${deviceId}/snmp`).then(r => {
@@ -54,6 +88,18 @@ export function InterfaceGraphs({ deviceId, deviceType = "mikrotik", onNotice })
     return () => { alive = false; clearInterval(t); };
   }, [liveMode, iface, deviceId, deviceType, onNotice]);
 
+  const exportCsv = () => {
+    if (!traffic.length) return onNotice?.("Nothing to export yet");
+    const rows = [["timestamp", "interface", "rx_mbps", "tx_mbps"], ...traffic.map(p => [p.ts || p.time, iface, p.rx_mbps, p.tx_mbps])];
+    const csv = rows.map(r => r.join(",")).join("\n");
+    download(`data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`, `${iface}-${liveMode ? "live" : `${hours}h`}.csv`);
+    onNotice?.(`Exported ${traffic.length} rows for ${iface}`);
+  };
+  const exportPng = () => {
+    if (!svgToPng(chartRef.current, `${iface}-${liveMode ? "live" : `${hours}h`}.png`)) onNotice?.("Chart is not ready yet");
+  };
+
+  const labelled = ifaces.map(i => ({ ...i, alias: i.alias || comments[i.name] || "" }));
   const traffic = liveMode ? live : (data?.traffic || []).map(p => ({ ...p, time: stamp(p.ts, hours) }));
   const ping = liveMode ? [] : (data?.ping || []).map(p => ({ ...p, time: stamp(p.ts, hours) }));
   const stats = traffic.length
@@ -67,9 +113,13 @@ export function InterfaceGraphs({ deviceId, deviceType = "mikrotik", onNotice })
         <span className="graph-picker">Interface
         <select value={iface} onChange={e => setIface(e.target.value)} data-testid="graph-iface">
           {ifaces.length === 0 && <option value="">no recorded interface</option>}
-          {ifaces.map(i => <option key={i.name} value={i.name}>{`${i.name} · ${i.status}`}</option>)}
+          {labelled.map(i => <option key={i.name} value={i.name}>{`${i.name}${i.alias ? ` (${i.alias})` : ""} · ${i.status}`}</option>)}
         </select></span>
         {RANGES.map(r => <button key={r.label} className={`button compact ${hours === r.hours ? "primary" : "secondary"}`} onClick={() => setHours(r.hours)} data-testid={`graph-range-${r.label.replace(/ /g, "-").toLowerCase()}`}>{r.label}</button>)}
+      </div>
+      <div className="res-tools">
+        <button className="button secondary compact" onClick={exportCsv} data-testid="graph-export-csv"><Download size={13} />CSV</button>
+        <button className="button secondary compact" onClick={exportPng} data-testid="graph-export-png"><Image size={13} />PNG</button>
       </div>
       <span className="muted" data-testid="graph-meta">{liveMode
         ? `live · ${deviceType === "mikrotik" ? "RouterOS API every 5s" : "SNMP sweep every 15s"} · ${live.length} points`
@@ -85,8 +135,8 @@ export function InterfaceGraphs({ deviceId, deviceType = "mikrotik", onNotice })
             <div className="snmp-stat"><span>Ping average</span><b>{ping.length ? `${(ping.reduce((a, p) => a + p.ping_ms, 0) / ping.length).toFixed(1)} ms` : liveMode ? "live view" : "—"}</b><small>ICMP every 60s</small></div>
             <div className="snmp-stat"><span>Packet loss</span><b>{ping.length ? `${(ping.reduce((a, p) => a + p.loss, 0) / ping.length).toFixed(1)}%` : "—"}</b><small>window average</small></div>
           </div>
-          <p className="eyebrow chart-label">TRAFFIC · {iface}</p>
-          <div className="chart" data-testid="graph-traffic">
+          <p className="eyebrow chart-label">TRAFFIC · {iface}{labelled.find(i => i.name === iface)?.alias ? ` · ${labelled.find(i => i.name === iface).alias}` : ""}</p>
+          <div className="chart" ref={chartRef} data-testid="graph-traffic">
             <ResponsiveContainer width="100%" height="100%"><AreaChart data={traffic}>
               <defs><linearGradient id="hrx" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#38bdf8" stopOpacity=".32" /><stop offset="100%" stopColor="#38bdf8" stopOpacity="0" /></linearGradient>
                 <linearGradient id="htx" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f59e0b" stopOpacity=".25" /><stop offset="100%" stopColor="#f59e0b" stopOpacity="0" /></linearGradient></defs>

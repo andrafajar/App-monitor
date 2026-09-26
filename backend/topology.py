@@ -66,7 +66,7 @@ async def topology_interfaces(request: Request, user: dict = Depends(require("ov
     states = {s["device_id"]: s for s in await db.snmp_state.find({}, {"_id": 0, "counters": 0}).to_list(500)}
     return {"items": [{"device_id": d["id"], "name": d["name"], "snmp_enabled": bool(d.get("snmp_enabled")),
                        "error": (states.get(d["id"]) or {}).get("error"),
-                       "interfaces": [{"name": i["name"], "status": i["status"]} for i in (states.get(d["id"]) or {}).get("interfaces") or []]} for d in devices]}
+                       "interfaces": [{"name": i["name"], "alias": i.get("alias", ""), "status": i["status"]} for i in (states.get(d["id"]) or {}).get("interfaces") or []]} for d in devices]}
 
 
 @topology_router.put("/topology/nodes/{device_id}")
@@ -100,6 +100,25 @@ async def create_link(body: LinkIn, request: Request, user: dict = Depends(requi
     await db.topo_links.insert_one(dict(doc))
     await audit(user, "topology.link", doc["id"], f"{body.a_device}:{body.a_iface} ↔ {body.b_device}:{body.b_iface}")
     return {"ok": True, "link": {k: doc[k] for k in ("id", "a_device", "a_iface", "b_device", "b_iface", "label")}}
+
+
+@topology_router.put("/topology/links/{link_id}")
+async def update_link(link_id: str, body: LinkIn, request: Request, user: dict = Depends(require("overview", "write"))):
+    from server import audit, visible_router
+    ws = await current_workspace(request, user)
+    link = await db.topo_links.find_one({"id": link_id, "workspace_id": ws}, {"_id": 0})
+    if not link: raise HTTPException(404, "Link not found")
+    if body.a_device == body.b_device and body.a_iface == body.b_iface: raise HTTPException(422, "Pick two different interfaces")
+    await visible_router(body.a_device, request, user)
+    await visible_router(body.b_device, request, user)
+    await assert_scanned(body.a_device, body.a_iface)
+    await assert_scanned(body.b_device, body.b_iface)
+    clash = await db.topo_links.find_one({"workspace_id": ws, "id": {"$ne": link_id}, "a_device": body.a_device,
+                                          "a_iface": body.a_iface, "b_device": body.b_device, "b_iface": body.b_iface})
+    if clash: raise HTTPException(409, "That link already exists")
+    await db.topo_links.update_one({"id": link_id}, {"$set": {**body.model_dump(), "updated_at": now().isoformat(), "updated_by": user["email"]}})
+    await audit(user, "topology.link-edit", link_id, f"{body.a_device}:{body.a_iface} ↔ {body.b_device}:{body.b_iface}")
+    return {"ok": True, "link": {"id": link_id, **body.model_dump()}}
 
 
 @topology_router.delete("/topology/links/{link_id}")

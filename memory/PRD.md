@@ -37,9 +37,13 @@ Schedules: `.emergent/crons.yml` → `/api/cron/alarm-scan` & `/api/cron/backup-
 `mr-65920574` IDC MONITORING 103.102.13.4 — API 8728 open, **SSH 2122 works** (real shell verified), telnet 1623 filtered from the app's egress IP. Remote ports must allow the NetPulse server IP (shown by Check ports), not the operator's PC.
 
 ## Backlog
-- **P1**: SNMP traffic history charts per interface (data is already stored for 30 days); vendor-specific CPU OIDs when hrProcessorLoad is absent; auto-suggest links from LLDP/CDP as an optional helper.
+- **P1**: auto-suggest topology links from LLDP/CDP (confirmed by the operator); drag-and-drop ordering for board cards; per-board public display selection; interface graph export (CSV/PNG).
 - P1: Telegram delivery for syslog rules verified with a real bot; WebSocket push instead of polling; board widget drag-and-drop; per-board public display selection; TCP syslog.
 - P2: PostgreSQL/Redis migration, SMTP backup delivery, workspace-level Telegram override, native MikroTik graphs.
+
+## Latest additions (2026-09-26, iter 15b)
+- **Console window** per device: `ws-open-console` opens `/console/{deviceId}` in a chromeless popup (Proxmox style) showing only that device's workspace — no sidebar, no fleet nav — with all RouterOS menus, graphs and terminals inside it. Backed by the new `GET /api/routers/{id}` single-device endpoint.
+- Public display dots now **pin** a single panel (rotation pauses but the board stays single-panel).
 
 ## Lab fixtures (preview pod)
 - `Lab SNMP Agent` device → net-snmp on 127.0.0.1 udp/1161, community `netpulse` (start with `snmpd -f -Lo -C -c /tmp/snmpd.conf &`). Used by SNMP/topology tests; keep it.

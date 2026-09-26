@@ -16,6 +16,7 @@ import MySettings from "@/pages/MySettings";
 import GroupsPage, { GroupSettings } from "@/pages/GroupsPage";
 import SyslogPage from "@/pages/SyslogPage";
 import DisplayBoard from "@/pages/DisplayBoard";
+import DeviceConsole from "@/pages/DeviceConsole";
 import { DashboardTabs, SyslogWidget } from "@/components/DashboardTabs";
 import { BoardCards } from "@/components/BoardCards";
 import NotificationsPanel from "@/pages/NotificationsPanel";
@@ -243,7 +244,7 @@ function Shell() {
               {routers.map(r => <tr key={r.id} onClick={() => openWorkspace(r, "Interface Graphs")} data-testid={`router-row-${r.id}`}><td><div className="router-name"><div className={`router-icon ${r.color || "cyan"}`}><Router size={15} /></div><div><b>{r.name}</b><span>{r.host}{(r.device_type && r.device_type !== "mikrotik") ? ` · ${r.device_type}` : ""}{r.description ? ` · ${r.description}` : ""}</span></div></div></td><td><span className="group-label">{r.group}</span></td><td><Status value={r.status} /></td><td><div className="bar-value"><span>{r.cpu}%</span><i><b style={{ width: `${r.cpu}%` }} /></i></div></td><td><div className="bar-value"><span>{r.memory ? `${r.memory}%` : "—"}</span><i><b className={r.memory > 70 ? "warn" : ""} style={{ width: `${r.memory}%` }} /></i></div></td><td className="mono">{r.version}</td><td className="muted">{r.uptime}</td>
                 <td><div className="row-actions">{canWriteRouters && <button className="icon-btn" title="Edit device" onClick={(e) => { e.stopPropagation(); openEdit(r); }} data-testid={`router-edit-${r.id}`}><Pencil size={15} /></button>}{canWriteRouters && <button className="icon-btn tg-del" title="Remove" onClick={(e) => { e.stopPropagation(); removeRouter(r.id, r.name); }} data-testid={`router-delete-${r.id}`}><Trash2 size={15} /></button>}<button className="row-arrow" onClick={(e) => { e.stopPropagation(); openWorkspace(r); }} data-testid={`router-details-${r.id}`}><ChevronRight size={16} /></button></div></td></tr>)}
             </tbody></table>{routers.length === 0 && <div className="empty-state" data-testid="empty-router-state">{data.routers.length === 0 ? "No devices in this workspace yet — add one to start." : "No devices match this filter."}</div>}</div></section>}
-          {active === "Overview" && <BoardCards cards={board?.cards} devices={routers} allDevices={data.routers} />}}
+          {active === "Overview" && <BoardCards cards={board?.cards} devices={routers} allDevices={data.routers} />}
           {active === "Overview" && widget("syslog") && can("syslog") && <SyslogWidget deviceIds={board?.device_ids} />}
           {active === "Overview" && <div className="footer-note"><span><Database size={14} />RouterOS API · persistent sessions per user</span><span>Signed in as <b>{user.email}</b></span></div>}
         </>}
@@ -265,5 +266,5 @@ function Gate() {
 }
 
 export default function App() {
-  return <BrowserRouter><AuthProvider><Routes><Route path="/display/:token" element={<DisplayBoard />} /><Route path="/login" element={<Login />} /><Route path="/*" element={<Gate />} /></Routes></AuthProvider></BrowserRouter>;
+  return <BrowserRouter><AuthProvider><Routes><Route path="/display/:token" element={<DisplayBoard />} /><Route path="/console/:routerId" element={<DeviceConsole />} /><Route path="/login" element={<Login />} /><Route path="/*" element={<Gate />} /></Routes></AuthProvider></BrowserRouter>;
 }

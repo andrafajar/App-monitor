@@ -205,3 +205,12 @@
 .card-builder-row select,.card-builder-row input{display:block;margin-top:6px;background:#080d16;border:1px solid var(--line);color:#e2e8f0;border-radius:4px;padding:8px 10px;font-size:11px;font-family:'DM Mono',monospace;min-width:150px}
 .card-builder-row select:focus,.card-builder-row input:focus{outline:0;border-color:var(--blue)}
 .card-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+
+.console-shell{min-height:100vh;background:var(--bg);display:flex;flex-direction:column}
+.console-top{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);background:#080d16;position:sticky;top:0;z-index:20}
+.console-top>div:nth-child(2){display:flex;flex-direction:column;flex:1;min-width:0}
+.console-top b{font-size:13px;color:#e8eef6}
+.console-top span{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#64748b;font-family:'DM Mono',monospace}
+.console-shell .workspace-page{border:0;border-radius:0;flex:1;min-height:0}
+.console-shell .ws-topbar .ws-title>.icon-btn{display:none}
+.console-notice{margin:10px 18px 0;border:1px solid #235070;border-radius:5px;background:#0d1c2e;color:#cfe8fb;padding:9px 13px;font-size:11px}

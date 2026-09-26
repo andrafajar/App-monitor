@@ -280,6 +280,13 @@ async def create_router(item: RouterCreate, request: Request, user: dict = Depen
     await audit(user, "router.create", doc["id"], doc["name"])
     return {"ok": True, "message": "Router onboarded", "router": sanitize_router(doc, user), "probe": {"status": probe.get("status"), "error": probe.get("error")}}
 
+@api.get("/routers/{router_id}")
+async def get_router(router_id: str, request: Request, user: dict = Depends(require("routers", "read"))):
+    """Single device, used by the standalone console window."""
+    router = await visible_router(router_id, request, user)
+    return {"router": sanitize_router(router, user)}
+
+
 @api.put("/routers/{router_id}")
 async def update_router(router_id: str, item: RouterUpdate, request: Request, user: dict = Depends(require("routers", "write"))):
     router = await visible_router(router_id, request, user)

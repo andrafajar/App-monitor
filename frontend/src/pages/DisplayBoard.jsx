@@ -29,14 +29,14 @@ export default function DisplayBoard() {
     return () => { alive = false; clearInterval(t); };
   }, [token]);
 
-  const carousel = !!data?.display?.carousel && !paused;
+  const carousel = !!data?.display?.carousel;   // single-panel mode stays on even when rotation is paused/pinned
   const seconds = data?.display?.carousel_seconds || 20;
   const visible = PANELS.filter(p => p !== "topology" || data?.topology?.nodes?.length > 0);
   useEffect(() => {
-    if (!carousel || visible.length < 2) return;
+    if (!carousel || paused || visible.length < 2) return;
     const t = setInterval(() => setSlide(s => (s + 1) % visible.length), seconds * 1000);
     return () => clearInterval(t);
-  }, [carousel, seconds, visible.length]);
+  }, [carousel, paused, seconds, visible.length]);
 
   if (error) return <div className="display-shell"><div className="display-empty" data-testid="display-error"><Lock size={18} />{error}</div></div>;
   if (!data) return <div className="display-shell"><div className="display-empty"><Activity size={18} />Loading board…</div></div>;

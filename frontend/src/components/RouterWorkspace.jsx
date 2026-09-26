@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ExternalLink, Eye, EyeOff, LineChart, Loader2, Pencil, Plus, Power, RefreshCw, Router, Settings2, Trash2 } from "lucide-react";
+import { ChevronLeft, ExternalLink, Eye, EyeOff, LineChart, Loader2, MonitorUp, Pencil, Plus, Power, RefreshCw, Router, Settings2, Trash2 } from "lucide-react";
 import { api, errorText } from "@/lib/api";
 import { EDITABLE_FIELDS, PANEL_TABS, RESOURCE_COLUMNS, RESOURCE_KEY, SENSITIVE_TABS, SINGLE_OBJECT, WINBOX_MENU } from "@/lib/ros";
 import { ConfigEditor, ConfirmRemove, PermissionPopup } from "@/components/ConfigEditor";
@@ -125,6 +125,8 @@ export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, o
   };
   const reconnect = async () => { setBusy("re"); setReloadKey(k => k + 1); setTimeout(() => { loadConn(); setBusy(""); }, 1200); };
   const openTab = () => window.open(`${window.location.origin}/?router=${router.id}&cat=${encodeURIComponent(cat)}`, "_blank", "noopener");
+  const openConsole = () => window.open(`${window.location.origin}/console/${router.id}?cat=${encodeURIComponent(cat)}`, `netpulse-console-${router.id}`,
+    "popup=yes,noopener,width=1400,height=900,left=120,top=60,toolbar=no,menubar=no,location=no,status=no");
   const connLabel = conn.connected ? `Session up · ${Math.max(0, Math.round((Date.now() / 1000 - conn.connected_at) / 60))}m` : "No session";
 
   return <section className="workspace-page" data-testid={`workspace-${router.id}`}>
@@ -147,6 +149,7 @@ export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, o
         {conn.connected
           ? <button className="button secondary compact" onClick={disconnect} disabled={busy === "disc"} data-testid="ws-disconnect"><Power size={13} />Disconnect</button>
           : <button className="button secondary compact" onClick={reconnect} disabled={busy === "re"} data-testid="ws-reconnect"><Power size={13} />Reconnect</button>}
+        {onBack && <button className="button secondary compact" onClick={openConsole} title="Open this device in its own window" data-testid="ws-open-console"><MonitorUp size={13} />Console window</button>}
         <button className="button secondary compact" onClick={openTab} data-testid="ws-open-new-tab"><ExternalLink size={13} />New tab</button>
         {canWriteRouters && onEdit && <button className="button secondary compact" onClick={() => onEdit(router)} data-testid="ws-edit-router"><Pencil size={13} />Edit</button>}
         {canWriteRouters && onRemove && <button className="button secondary compact tg-del" onClick={() => onRemove(router.id, router.name)} data-testid="ws-remove-router"><Trash2 size={13} />Remove</button>}

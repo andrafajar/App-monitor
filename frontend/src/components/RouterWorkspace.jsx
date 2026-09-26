@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ExternalLink, Eye, EyeOff, Loader2, Pencil, Plus, Power, RefreshCw, Router, Trash2 } from "lucide-react";
+import { ChevronLeft, ExternalLink, Eye, EyeOff, LineChart, Loader2, Pencil, Plus, Power, RefreshCw, Router, Settings2, Trash2 } from "lucide-react";
 import { api, errorText } from "@/lib/api";
 import { EDITABLE_FIELDS, PANEL_TABS, RESOURCE_COLUMNS, RESOURCE_KEY, SENSITIVE_TABS, SINGLE_OBJECT, WINBOX_MENU } from "@/lib/ros";
 import { ConfigEditor, ConfirmRemove, PermissionPopup } from "@/components/ConfigEditor";
@@ -11,11 +11,12 @@ import { TerminalPanel } from "@/components/TerminalPanel";
 import { TrafficPanel } from "@/components/TrafficPanel";
 import { SshTerminal } from "@/components/SshTerminal";
 import { SnmpPanel } from "@/components/SnmpPanel";
+import { InterfaceGraphs } from "@/components/InterfaceGraphs";
 import { AlarmWatchPanel } from "@/components/AlarmWatchPanel";
 
 const VENDOR_LABEL = { mikrotik: "MikroTik", huawei: "Huawei", juniper: "Juniper", cisco: "Cisco", other: "Other vendor" };
 // Non-MikroTik vendors are monitored (ping + SNMP) and reached over SSH/Telnet; RouterOS menus stay MikroTik-only.
-const GENERIC_MENU = [{ section: "MONITORING", items: ["SNMP", "Alarm Watch"] }, { section: "ACCESS", items: ["Terminal (SSH)", "Terminal (Telnet)"] }];
+const GENERIC_MENU = [{ section: "MONITORING", items: ["SNMP", "Interface Graphs", "Alarm Watch"] }, { section: "ACCESS", items: ["Terminal (SSH)", "Terminal (Telnet)"] }];
 
 export function ResourceTable({ tab, routerId, revealSecret, onRevealToggle, onNotice, onGoSettings, reloadKey }) {
   const resourceKey = RESOURCE_KEY[tab];
@@ -96,8 +97,8 @@ export function ResourceTable({ tab, routerId, revealSecret, onRevealToggle, onN
 export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, onEdit, onGoSettings, canWriteRouters, initialCat }) {
   const vendor = router.device_type || "mikrotik";
   const isRos = vendor === "mikrotik";
-  const menu = isRos ? [...WINBOX_MENU, { section: "MONITORING", items: ["SNMP"] }] : GENERIC_MENU;
-  const [cat, setCat] = useState(!isRos ? "SNMP" : initialCat && (RESOURCE_KEY[initialCat] || PANEL_TABS.includes(initialCat)) ? initialCat : "Interfaces");
+  const menu = isRos ? [...WINBOX_MENU, { section: "MONITORING", items: ["SNMP", "Interface Graphs"] }] : GENERIC_MENU;
+  const [cat, setCat] = useState(initialCat && (RESOURCE_KEY[initialCat] || PANEL_TABS.includes(initialCat) || initialCat === "Interface Graphs") ? initialCat : "Interface Graphs");
   const [revealSecret, setRevealSecret] = useState(false);
   const [conn, setConn] = useState({ connected: false, connected_at: 0 });
   const [busy, setBusy] = useState("");
@@ -139,6 +140,9 @@ export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, o
       </div>
       <div className="ws-conn"><span className={`ws-dot ${conn.connected ? "on" : "off"}`} />{connLabel}</div>
       <div className="ws-actions">
+        {cat === "Interface Graphs"
+          ? <button className="button primary compact" onClick={() => setCat(isRos ? "Interfaces" : "SNMP")} data-testid="ws-manage">{isRos ? <><Settings2 size={13} />Manage (RouterOS)</> : <><Settings2 size={13} />Manage SNMP</>}</button>
+          : <button className="button secondary compact" onClick={() => setCat("Interface Graphs")} data-testid="ws-graphs"><LineChart size={13} />Graphs</button>}
         <button className="button secondary compact" onClick={test} disabled={busy === "test"} data-testid="ws-test-connection"><RefreshCw size={13} className={busy === "test" ? "spin" : ""} />Test</button>
         {conn.connected
           ? <button className="button secondary compact" onClick={disconnect} disabled={busy === "disc"} data-testid="ws-disconnect"><Power size={13} />Disconnect</button>
@@ -156,8 +160,9 @@ export function WorkspacePage({ router, onBack, onNotice, onRefresh, onRemove, o
         </div>)}
       </aside>
       <div className="ws-main" data-testid="ws-main">
-        <div className="ws-cat-head"><p className="eyebrow">{cat === "SNMP" ? "SNMP V2C · PING & INTERFACE POLLING" : cat === "Backups" ? "OBJECT STORAGE · SNAPSHOTS & SCHEDULE" : cat === "Terminal (API)" ? "ROUTEROS API · COMMAND BRIDGE" : cat === "Terminal (SSH)" ? "ROUTEROS SHELL · SSH" : cat === "Terminal (Telnet)" ? "ROUTEROS SHELL · TELNET" : cat === "Traffic" ? "ROUTEROS API · LIVE BANDWIDTH" : "ROUTEROS API"} · {cat.toUpperCase()}</p><h2 data-testid="ws-cat-title">{cat}</h2></div>
+        <div className="ws-cat-head"><p className="eyebrow">{cat === "SNMP" ? "SNMP V2C · PING & INTERFACE POLLING" : cat === "Interface Graphs" ? "SNMP HISTORY · 30 DAYS" : cat === "Backups" ? "OBJECT STORAGE · SNAPSHOTS & SCHEDULE" : cat === "Terminal (API)" ? "ROUTEROS API · COMMAND BRIDGE" : cat === "Terminal (SSH)" ? "ROUTEROS SHELL · SSH" : cat === "Terminal (Telnet)" ? "ROUTEROS SHELL · TELNET" : cat === "Traffic" ? "ROUTEROS API · LIVE BANDWIDTH" : "ROUTEROS API"} · {cat.toUpperCase()}</p><h2 data-testid="ws-cat-title">{cat}</h2></div>
         {cat === "SNMP" ? <SnmpPanel deviceId={router.id} deviceName={router.name} onNotice={onNotice} />
+          : cat === "Interface Graphs" ? <InterfaceGraphs deviceId={router.id} deviceType={vendor} onNotice={onNotice} />
           : cat === "Backups" ? <BackupsPanel routerId={router.id} onNotice={onNotice} onGoSettings={onGoSettings} />
           : cat === "Traffic" ? <TrafficPanel routerId={router.id} onGoSettings={onGoSettings} />
           : cat === "Terminal (SSH)" ? <SshTerminal routerId={router.id} routerName={router.name} proto="ssh" port={router.ssh_port} />

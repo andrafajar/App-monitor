@@ -16,11 +16,14 @@ class DisplayIn(BaseModel):
     show_ips: bool = False
     title: str = Field("", max_length=80)
     rotate: bool = False
+    carousel: bool = False
+    carousel_seconds: int = Field(20, ge=5, le=300)
 
 
 def display_public(ws: dict) -> dict:
     cfg = ws.get("public_display") or {}
     return {"enabled": bool(cfg.get("enabled")), "show_ips": bool(cfg.get("show_ips")), "title": cfg.get("title", ""),
+            "carousel": bool(cfg.get("carousel")), "carousel_seconds": int(cfg.get("carousel_seconds") or 20),
             "token": cfg.get("token"), "path": f"/display/{cfg['token']}" if cfg.get("token") else None, "updated_at": cfg.get("updated_at")}
 
 
@@ -38,7 +41,8 @@ async def set_display(ws_id: str, body: DisplayIn, user: dict = Depends(require(
     cfg = ws.get("public_display") or {}
     token = cfg.get("token")
     if body.rotate or not token: token = secrets.token_urlsafe(18)
-    cfg = {"enabled": body.enabled, "show_ips": body.show_ips, "title": body.title.strip(), "token": token, "updated_at": now().isoformat(), "updated_by": user["email"]}
+    cfg = {"enabled": body.enabled, "show_ips": body.show_ips, "title": body.title.strip(), "token": token,
+           "carousel": body.carousel, "carousel_seconds": body.carousel_seconds, "updated_at": now().isoformat(), "updated_by": user["email"]}
     await db.workspaces.update_one({"id": ws_id}, {"$set": {"public_display": cfg}})
     return {"ok": True, "display": display_public({"public_display": cfg})}
 
@@ -60,6 +64,7 @@ async def display_board(token: str):
     since = (now() - timedelta(hours=24)).isoformat()
     from topology import topology_payload
     return {"workspace": {"id": ws["id"], "name": ws["name"], "title": cfg.get("title") or ws["name"]},
+            "display": {"carousel": bool(cfg.get("carousel")), "carousel_seconds": int(cfg.get("carousel_seconds") or 20)},
             "topology": await topology_payload(ws["id"]),
             "devices": board,
             "counts": {"total": len(board), "online": sum(1 for d in board if d["status"] == "online"), "offline": sum(1 for d in board if d["status"] == "offline"),

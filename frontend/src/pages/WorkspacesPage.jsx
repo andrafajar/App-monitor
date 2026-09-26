@@ -11,7 +11,7 @@ function PublicDisplay({ wsId, onNotice }) {
   useEffect(() => { load(); }, [wsId]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = async (patch) => {
     setBusy(true);
-    try { const r = await api.put(`/workspaces/${wsId}/public-display`, { enabled: cfg?.enabled ?? false, show_ips: cfg?.show_ips ?? false, title: cfg?.title || "", rotate: false, ...patch }); setCfg(r.data.display); onNotice(patch.rotate ? "Display link rotated" : "Display settings saved"); }
+    try { const r = await api.put(`/workspaces/${wsId}/public-display`, { enabled: cfg?.enabled ?? false, show_ips: cfg?.show_ips ?? false, title: cfg?.title || "", rotate: false, carousel: cfg?.carousel ?? false, carousel_seconds: parseInt(cfg?.carousel_seconds, 10) || 20, ...patch }); setCfg(r.data.display); onNotice(patch.rotate ? "Display link rotated" : "Display settings saved"); }
     catch (err) { onNotice(errorText(err, "Save failed")); } finally { setBusy(false); }
   };
   if (!cfg) return null;
@@ -22,6 +22,8 @@ function PublicDisplay({ wsId, onNotice }) {
     <div className="tg-fields">
       <label className="tg-toggle"><input type="checkbox" checked={cfg.enabled} onChange={e => save({ enabled: e.target.checked })} disabled={busy} data-testid={`display-enable-${wsId}`} /><span>Publish read-only board</span></label>
       <label className="tg-toggle"><input type="checkbox" checked={cfg.show_ips} onChange={e => save({ show_ips: e.target.checked })} disabled={busy} data-testid={`display-showips-${wsId}`} /><span>Show device IP addresses</span></label>
+      <label className="tg-toggle"><input type="checkbox" checked={!!cfg.carousel} onChange={e => save({ carousel: e.target.checked })} disabled={busy} data-testid={`display-carousel-${wsId}`} /><span>Rotate panels on the big screen</span></label>
+      <label>Rotation seconds<input type="number" min={5} max={300} value={cfg.carousel_seconds ?? 20} onChange={e => setCfg(c => ({ ...c, carousel_seconds: e.target.value }))} onBlur={() => save({ carousel_seconds: parseInt(cfg.carousel_seconds, 10) || 20 })} data-testid={`display-carousel-seconds-${wsId}`} /></label>
       <label>Board title<input value={cfg.title || ""} onChange={e => setCfg(c => ({ ...c, title: e.target.value }))} onBlur={() => save({ title: cfg.title || "" })} placeholder="NOC – Central Operations" data-testid={`display-title-${wsId}`} /></label>
     </div>
     {cfg.path && <div className="tg-actions">

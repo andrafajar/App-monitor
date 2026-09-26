@@ -9,10 +9,14 @@ import "@/App.css";
 
 const raw = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api/public` });
 
+const PANELS = ["traffic", "alarms", "topology", "devices"];
+
 export default function DisplayBoard() {
   const { token } = useParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [slide, setSlide] = useState(0);
+  const [paused, setPaused] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -25,9 +29,19 @@ export default function DisplayBoard() {
     return () => { alive = false; clearInterval(t); };
   }, [token]);
 
+  const carousel = !!data?.display?.carousel && !paused;
+  const seconds = data?.display?.carousel_seconds || 20;
+  const visible = PANELS.filter(p => p !== "topology" || data?.topology?.nodes?.length > 0);
+  useEffect(() => {
+    if (!carousel || visible.length < 2) return;
+    const t = setInterval(() => setSlide(s => (s + 1) % visible.length), seconds * 1000);
+    return () => clearInterval(t);
+  }, [carousel, seconds, visible.length]);
+
   if (error) return <div className="display-shell"><div className="display-empty" data-testid="display-error"><Lock size={18} />{error}</div></div>;
   if (!data) return <div className="display-shell"><div className="display-empty"><Activity size={18} />Loading board…</div></div>;
 
+  const shown = (panel) => !carousel || visible[slide % visible.length] === panel;
   const health = data.counts.total ? Math.round(data.counts.online * 100 / data.counts.total) : 0;
   return <div className="display-shell" data-testid="display-board">
     <header className="display-top">
@@ -41,19 +55,23 @@ export default function DisplayBoard() {
       <div className="metric"><div className="metric-icon amber"><AlertTriangle size={17} /></div><div><p>Alarms 24h</p><strong>{data.counts.alarms_24h}</strong><small>dispatched to Telegram roles</small></div></div>
       <div className="metric"><div className="metric-icon violet"><Activity size={17} /></div><div><p>Aggregate now</p><strong>{data.traffic.length ? `${data.traffic[data.traffic.length - 1].inbound} / ${data.traffic[data.traffic.length - 1].outbound}` : "—"}</strong><small>Mbps in / out</small></div></div>
     </div>
+    {data.display?.carousel && <div className="display-rotator" data-testid="display-rotator">
+      {visible.map((p, i) => <button key={p} className={`rot-dot ${i === (slide % visible.length) ? "on" : ""}`} onClick={() => { setSlide(i); setPaused(true); }} data-testid={`display-dot-${p}`}>{p}</button>)}
+      <button className="rot-dot" onClick={() => setPaused(p => !p)} data-testid="display-rotate-toggle">{paused ? "resume rotation" : `rotating every ${seconds}s`}</button>
+    </div>}
     <div className="display-grid">
-      <section className="panel traffic-panel"><div className="panel-head"><div><p className="eyebrow">LIVE BANDWIDTH</p><h2>Aggregate traffic</h2></div></div>
-        {data.traffic.length ? <AggregateTrafficChart data={data.traffic} /> : <div className="drawer-message"><Activity size={16} />Waiting for the first bandwidth sample.</div>}</section>
-      <section className="panel alarm-panel"><div className="panel-head"><div><p className="eyebrow">SIGNAL CENTER</p><h2>Recent alarms</h2></div></div>
+      {shown("traffic") && <section className="panel traffic-panel"><div className="panel-head"><div><p className="eyebrow">LIVE BANDWIDTH</p><h2>Aggregate traffic</h2></div></div>
+        {data.traffic.length ? <AggregateTrafficChart data={data.traffic} /> : <div className="drawer-message"><Activity size={16} />Waiting for the first bandwidth sample.</div>}</section>}
+      {shown("alarms") && <section className="panel alarm-panel"><div className="panel-head"><div><p className="eyebrow">SIGNAL CENTER</p><h2>Recent alarms</h2></div></div>
         <div className="alarm-list">{data.alarms.length === 0 && <div className="drawer-message"><AlertTriangle size={16} />No alarms.</div>}
           {data.alarms.map((a, i) => <div key={i} className={`alarm-item ${a.kind === "router-unreachable" ? "danger" : a.kind === "cpu-threshold" ? "warning" : "info"}`} data-testid={`display-alarm-${i}`}>
-            <div className="alarm-symbol"><AlertTriangle size={16} /></div><div><b>{a.kind}</b><span>{a.device} · {a.detail}</span><small>{new Date(a.created_at).toLocaleString()}</small></div></div>)}</div></section>
+            <div className="alarm-symbol"><AlertTriangle size={16} /></div><div><b>{a.kind}</b><span>{a.device} · {a.detail}</span><small>{new Date(a.created_at).toLocaleString()}</small></div></div>)}</div></section>}
     </div>
-    {data.topology?.nodes?.length > 0 && <section className="panel topo-panel" data-testid="display-topology">
+    {shown("topology") && data.topology?.nodes?.length > 0 && <section className="panel topo-panel" data-testid="display-topology">
       <div className="panel-head"><div><p className="eyebrow">TOPOLOGY · {data.topology.links.length} LINKS</p><h2>Network map</h2></div></div>
       <TopologyMap data={data.topology} readOnly />
     </section>}
-    <section className="panel routers-panel"><div className="panel-head table-head"><div><p className="eyebrow">FLEET / {data.counts.total} DEVICES</p><h2>Device health</h2></div></div>
+    {shown("devices") && <section className="panel routers-panel"><div className="panel-head table-head"><div><p className="eyebrow">FLEET / {data.counts.total} DEVICES</p><h2>Device health</h2></div></div>
       <div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>GROUP</th><th>STATUS</th><th>CPU</th><th>MEMORY</th><th>VERSION</th><th>UPTIME</th></tr></thead><tbody>
         {data.devices.map(d => <tr key={d.id} onClick={() => { window.location.href = "/login"; }} data-testid={`display-device-${d.id}`}>
           <td><div className="router-name"><div className="router-icon cyan"><Router size={15} /></div><div><b>{d.name}</b><span>{d.host || "sign in to see addressing"}</span></div></div></td>
@@ -62,7 +80,7 @@ export default function DisplayBoard() {
           <td><div className="bar-value"><span>{d.memory ? `${d.memory}%` : "—"}</span><i><b className={d.memory > 70 ? "warn" : ""} style={{ width: `${d.memory}%` }} /></i></div></td>
           <td className="mono">{d.version}</td><td className="muted">{d.uptime}</td>
         </tr>)}
-      </tbody></table></div></section>
+      </tbody></table></div></section>}
     <p className="display-foot">Clicking a device opens the sign-in page — configuration, credentials and terminals stay behind login.</p>
   </div>;
 }

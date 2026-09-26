@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { LayoutDashboard, Loader2, Plus, Save, ScrollText, Settings2, Trash2 } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { CARD_HOURS, CARD_TYPES } from "@/components/BoardCards";
 import { api, errorText, slug } from "@/lib/api";
 import { useAuth } from "@/auth/AuthContext";
 
@@ -11,17 +12,28 @@ export const WIDGET_LABELS = {
   devices: "Device fleet table",
   syslog: "Latest syslog messages",
 };
-const BLANK = { name: "", widgets: ["metrics", "traffic", "alarms", "devices"], group_ids: [], device_ids: [], order: 0 };
+const BLANK = { name: "", widgets: ["metrics", "traffic", "alarms", "devices"], cards: [], group_ids: [], device_ids: [], order: 0 };
+const BLANK_CARD = { type: "iface-traffic", title: "", device_id: "", iface: "", hours: 24 };
 
 function BoardModal({ open, onClose, editing, groups, devices, onSaved, onNotice }) {
   const [form, setForm] = useState(BLANK);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) setForm(editing ? { ...BLANK, ...editing } : BLANK); }, [open, editing]);
+  const [draft, setDraft] = useState(BLANK_CARD);
+  const [ifaces, setIfaces] = useState({});
+  useEffect(() => { if (open) { setForm(editing ? { ...BLANK, ...editing, cards: editing.cards || [] } : BLANK); setDraft(BLANK_CARD); } }, [open, editing]);
+  useEffect(() => { if (open) api.get("/topology/interfaces").then(r => setIfaces(Object.fromEntries((r.data.items || []).map(i => [i.device_id, i.interfaces])))).catch(() => setIfaces({})); }, [open]);
   if (!open) return null;
+  const addCard = () => {
+    if (draft.type !== "device-count" && !draft.device_id) return onNotice("Pick a device for that element");
+    if (draft.type === "iface-traffic" && !draft.iface) return onNotice("Pick an SNMP interface — run a scan on the device if the list is empty");
+    setForm(f => ({ ...f, cards: [...f.cards, { ...draft, id: `card-${Math.random().toString(36).slice(2, 8)}` }] }));
+    setDraft(BLANK_CARD);
+  };
+  const dropCard = (id) => setForm(f => ({ ...f, cards: f.cards.filter(c => c.id !== id) }));
   const toggle = (key, value) => setForm(f => ({ ...f, [key]: f[key].includes(value) ? f[key].filter(v => v !== value) : [...f[key], value] }));
   const submit = async (e) => {
     e.preventDefault(); setBusy(true);
-    const body = { name: form.name.trim(), widgets: form.widgets, group_ids: form.group_ids, device_ids: form.device_ids, order: Number(form.order) || 0 };
+    const body = { name: form.name.trim(), widgets: form.widgets, cards: form.cards, group_ids: form.group_ids, device_ids: form.device_ids, order: Number(form.order) || 0 };
     try {
       if (editing) await api.put(`/dashboards/${editing.id}`, body); else await api.post("/dashboards", body);
       onNotice(`Board "${body.name}" saved`); onSaved(); onClose();
@@ -37,6 +49,30 @@ function BoardModal({ open, onClose, editing, groups, devices, onSaved, onNotice
       <div className="watch-modes">
         {Object.entries(WIDGET_LABELS).map(([id, label]) => <label key={id} className={`watch-mode ${form.widgets.includes(id) ? "on" : ""}`} data-testid={`board-widget-${id}`}>
           <input type="checkbox" checked={form.widgets.includes(id)} onChange={() => toggle("widgets", id)} /><div><b>{id}</b><span className="muted">{label}</span></div></label>)}
+      </div>
+      <span className="pick-title">Custom elements ({form.cards.length})</span>
+      <div className="card-builder">
+        <div className="card-builder-row">
+          <label>Element<select value={draft.type} onChange={e => setDraft(d => ({ ...d, type: e.target.value, iface: "" }))} data-testid="card-type">
+            {CARD_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select></label>
+          {draft.type !== "device-count" && <label>Device<select value={draft.device_id} onChange={e => setDraft(d => ({ ...d, device_id: e.target.value, iface: "" }))} data-testid="card-device">
+            <option value="">— select —</option>
+            {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
+          {draft.type === "iface-traffic" && <label>Interface<select value={draft.iface} onChange={e => setDraft(d => ({ ...d, iface: e.target.value }))} disabled={!draft.device_id} data-testid="card-iface">
+            <option value="">— select —</option>
+            {(ifaces[draft.device_id] || []).map(i => <option key={i.name} value={i.name}>{`${i.name} · ${i.status}`}</option>)}</select></label>}
+          {draft.type === "iface-traffic" && <label>Timeframe<select value={draft.hours} onChange={e => setDraft(d => ({ ...d, hours: Number(e.target.value) }))} data-testid="card-hours">
+            {CARD_HOURS.map(r => <option key={r.hours} value={r.hours}>{r.label}</option>)}</select></label>}
+          <label>Title<input maxLength={50} value={draft.title} onChange={e => setDraft(d => ({ ...d, title: e.target.value }))} placeholder="optional" data-testid="card-title" /></label>
+          <button type="button" className="button primary compact" onClick={addCard} data-testid="card-add"><Plus size={13} />Add</button>
+        </div>
+        <div className="card-chips">
+          {form.cards.length === 0 && <span className="muted">No custom element yet — add a device counter or an SNMP interface chart for any timeframe up to 30 days.</span>}
+          {form.cards.map(c => <span key={c.id} className="record-chip on" data-testid={`card-chip-${c.id}`}>
+            {c.type === "iface-traffic" ? `${devices.find(d => d.id === c.device_id)?.name || c.device_id} · ${c.iface} · ${CARD_HOURS.find(r => r.hours === c.hours)?.label}` : c.type === "device-count" ? "device counters" : `${devices.find(d => d.id === c.device_id)?.name || c.device_id} · ping tile`}
+            <button type="button" className="icon-btn" onClick={() => dropCard(c.id)} data-testid={`card-remove-${c.id}`}><Trash2 size={12} /></button>
+          </span>)}
+        </div>
       </div>
       <span className="pick-title">Limit to groups ({form.group_ids.length || "all"})</span>
       <div className="watch-list">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Loader2, Radar, Save, Wifi } from "lucide-react";
+import { Activity, Loader2, Radar, Save, Stethoscope, Wifi } from "lucide-react";
 import { api, errorText } from "@/lib/api";
 
 const fmt = (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(2));
@@ -7,13 +7,16 @@ const fmt = (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(2)
 export function SnmpPanel({ deviceId, deviceName, onNotice }) {
   const [state, setState] = useState(null);
   const [form, setForm] = useState({ enabled: false, community: "", port: "161" });
+  const [record, setRecord] = useState({ mode: "auto", interfaces: [] });
   const [busy, setBusy] = useState("");
+  const [diag, setDiag] = useState(null);
 
   const load = useCallback(async () => {
     try {
       const r = await api.get(`/devices/${deviceId}/snmp`);
       setState(r.data);
       setForm({ enabled: !!r.data.config.enabled, community: "", port: String(r.data.config.port || 161) });
+      setRecord({ mode: r.data.config.record_mode || "auto", interfaces: r.data.config.recorded || [] });
     } catch (e) { onNotice?.(errorText(e, "Could not read SNMP settings")); }
   }, [deviceId, onNotice]);
   useEffect(() => { load(); }, [load]);
@@ -39,6 +42,25 @@ export function SnmpPanel({ deviceId, deviceName, onNotice }) {
     finally { setBusy(""); }
   };
 
+  const diagnose = async () => {
+    setBusy("diag");
+    try { const r = await api.get(`/devices/${deviceId}/snmp/diagnose`); setDiag(r.data); }
+    catch (err) { onNotice?.(errorText(err, "Diagnosis failed")); }
+    finally { setBusy(""); }
+  };
+
+  const saveRecord = async (patch) => {
+    const next = { mode: record.mode, interfaces: record.interfaces, ...patch };
+    setBusy("record");
+    try {
+      const r = await api.put(`/devices/${deviceId}/snmp/recorded`, next);
+      setRecord({ mode: r.data.config.record_mode, interfaces: r.data.config.recorded });
+      onNotice?.(next.mode === "auto" ? "Auto-scan on — newly discovered interfaces are added automatically, without duplicates" : `Recording ${r.data.config.recorded.length} selected interfaces`);
+    } catch (err) { onNotice?.(errorText(err, "Could not update the recorded interfaces")); }
+    finally { setBusy(""); }
+  };
+  const toggleIface = (name) => setRecord(r => ({ ...r, interfaces: r.interfaces.includes(name) ? r.interfaces.filter(n => n !== name) : [...r.interfaces, name] }));
+
   if (!state) return <div className="res-loading"><Loader2 size={14} className="spin" />Loading monitoring state…</div>;
   const snmp = state.snmp || {};
   const ifaces = snmp.interfaces || [];
@@ -58,10 +80,39 @@ export function SnmpPanel({ deviceId, deviceName, onNotice }) {
       <div className="snmp-actions">
         <button type="submit" className="button primary compact" disabled={busy === "save"} data-testid="snmp-save"><Save size={13} />{busy === "save" ? "Saving…" : "Save"}</button>
         <button type="button" className="button secondary compact" onClick={scan} disabled={busy === "scan"} data-testid="snmp-scan">{busy === "scan" ? <Loader2 size={13} className="spin" /> : <Radar size={13} />}Scan now</button>
+        <button type="button" className="button secondary compact" onClick={diagnose} disabled={busy === "diag"} data-testid="snmp-diagnose">{busy === "diag" ? <Loader2 size={13} className="spin" /> : <Stethoscope size={13} />}Diagnose</button>
       </div>
     </form>
 
     {snmp.error && <div className="res-error" data-testid="snmp-error">{snmp.error}</div>}
+    {diag && <div className={diag.answering ? "port-diag" : "port-blocked"} data-testid="snmp-diag">
+      <b>{diag.answering ? `udp/${diag.port} answers: ${diag.detail}` : `No SNMP answer on udp/${diag.port} (ping ${diag.ping.alive ? `${diag.ping.rtt_ms} ms` : "failed"}).`}</b>
+      {!diag.answering && <span>NetPulse queries from <b className="mono">{diag.from_ip}</b> — allow that IP, not your PC. {diag.hint}</span>}
+    </div>}
+
+    <div className="record-box" data-testid="snmp-record">
+      <div className="record-head">
+        <b>Recorded interfaces (30-day history)</b>
+        <div className="record-modes">
+          <label className={record.mode === "auto" ? "on" : ""}><input type="radio" name="rec-mode" checked={record.mode === "auto"} onChange={() => saveRecord({ mode: "auto" })} disabled={busy === "record"} data-testid="record-mode-auto" />Auto-scan &amp; add new</label>
+          <label className={record.mode === "manual" ? "on" : ""}><input type="radio" name="rec-mode" checked={record.mode === "manual"} onChange={() => setRecord(r => ({ ...r, mode: "manual" }))} disabled={busy === "record"} data-testid="record-mode-manual" />Choose manually</label>
+        </div>
+      </div>
+      <p className="muted">{record.mode === "auto"
+        ? "Every SNMP sweep appends interfaces it has not seen before — existing entries are never duplicated or reset."
+        : "Only the interfaces you tick are written to history; new interfaces found later are ignored until you add them."}</p>
+      <div className="record-list">
+        {ifaces.length === 0 && <span className="muted">Run “Scan now” first to discover interfaces.</span>}
+        {ifaces.map(i => <label key={i.name} className={`record-chip ${record.interfaces.includes(i.name) ? "on" : ""}`} data-testid={`record-iface-${i.name}`}>
+          <input type="checkbox" checked={record.interfaces.includes(i.name)} disabled={record.mode === "auto" || busy === "record"} onChange={() => toggleIface(i.name)} />
+          {i.name}<small>{i.status}</small>
+        </label>)}
+      </div>
+      {record.mode === "manual" && <div className="snmp-actions">
+        <button className="button primary compact" onClick={() => saveRecord({})} disabled={busy === "record"} data-testid="record-save"><Save size={13} />Save selection ({record.interfaces.length})</button>
+        <button className="button secondary compact" onClick={() => setRecord(r => ({ ...r, interfaces: ifaces.map(i => i.name) }))} data-testid="record-all">Select all scanned</button>
+      </div>}
+    </div>
     <div className="res-table" data-testid="snmp-table">
       <table><thead><tr><th>IDX</th><th>INTERFACE</th><th>STATUS</th><th>RX Mbps</th><th>TX Mbps</th></tr></thead><tbody>
         {ifaces.length === 0 && <tr><td colSpan={5} className="res-empty">No interfaces scanned yet — enable SNMP and press “Scan now”.</td></tr>}

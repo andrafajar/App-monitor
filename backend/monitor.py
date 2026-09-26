@@ -15,7 +15,13 @@ SYS_OIDS = {"descr": "1.3.6.1.2.1.1.1.0", "uptime": "1.3.6.1.2.1.1.3.0", "name":
 WALK_OIDS = {"name": "1.3.6.1.2.1.2.2.1.2", "status": "1.3.6.1.2.1.2.2.1.8", "alias": "1.3.6.1.2.1.31.1.1.1.18",
              "in64": "1.3.6.1.2.1.31.1.1.1.6", "out64": "1.3.6.1.2.1.31.1.1.1.10",
              "in32": "1.3.6.1.2.1.2.2.1.10", "out32": "1.3.6.1.2.1.2.2.1.16"}
-CPU_OID = "1.3.6.1.2.1.25.3.3.1.2"  # hrProcessorLoad — MikroTik, Cisco IOS-XE, Huawei VRP and Junos all answer this
+CPU_OID = "1.3.6.1.2.1.25.3.3.1.2"  # hrProcessorLoad — answered by MikroTik, Cisco IOS-XE, many Huawei/Junos boxes
+VENDOR_CPU_OIDS = {  # fallbacks for platforms that do not implement HOST-RESOURCES-MIB
+    "huawei": ["1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5", "1.3.6.1.4.1.2011.6.3.4.1.2"],
+    "cisco": ["1.3.6.1.4.1.9.9.109.1.1.1.1.6", "1.3.6.1.4.1.9.2.1.58"],
+    "juniper": ["1.3.6.1.4.1.2636.3.1.13.1.8", "1.3.6.1.4.1.2636.3.1.13.1.21"],
+    "mikrotik": ["1.3.6.1.4.1.14988.1.1.3.14"],
+}
 ETHER_HINTS = ("ether", "gigabit", "ge-", "xe-", "et-", "fastethernet", "gi", "te", "sfp", "eth")
 
 
@@ -23,6 +29,11 @@ class SnmpIn(BaseModel):
     enabled: bool = True
     community: str | None = Field(default=None, max_length=64)
     port: int = Field(161, ge=1, le=65535)
+
+
+class RecordIn(BaseModel):
+    mode: str = Field("auto", pattern="^(auto|manual)$")
+    interfaces: list[str] = Field(default_factory=list, max_length=200)
 
 
 # ---------- SNMP v2c ----------
@@ -81,6 +92,29 @@ def iface_kind(name: str) -> str:
     return "ether" if any(low.startswith(h) or h in low for h in ETHER_HINTS) else "other"
 
 
+async def cpu_load(host: str, port: int, community: str, vendor: str) -> int:
+    """hrProcessorLoad first, then the vendor's own CPU sensor for boxes that leave it empty."""
+    for oid in [CPU_OID, *VENDOR_CPU_OIDS.get(vendor, [])]:
+        try: rows = await snmp_walk(host, port, community, oid)
+        except Exception: continue
+        loads = [as_int(v) for v in rows.values() if str(v).strip().lstrip("-").isdigit() and 0 <= as_int(v) <= 100]
+        if loads: return int(round(sum(loads) / len(loads)))
+    return 0
+
+
+async def sync_registry(device: dict, interfaces: list[dict]) -> list[str]:
+    """Interfaces recorded to history. In auto mode every newly scanned interface is appended once — never duplicated,
+    never silently dropped; in manual mode the operator owns the list."""
+    registry = list(device.get("snmp_watch_interfaces") or [])
+    if (device.get("snmp_watch_mode") or "auto") == "auto":
+        fresh = [i["name"] for i in interfaces if i["name"] not in registry]
+        if fresh:
+            registry += fresh
+            await db.routers.update_one({"id": device["id"]}, {"$addToSet": {"snmp_watch_interfaces": {"$each": fresh}}})
+            device["snmp_watch_interfaces"] = registry
+    return registry
+
+
 def pretty_uptime(ticks: str) -> str:
     seconds = as_int(str(ticks).split(".")[0]) // 100
     if seconds <= 0: return str(ticks)[:40]
@@ -99,14 +133,12 @@ async def poll_snmp(device: dict) -> dict:
         status = await snmp_walk(host, port, community, WALK_OIDS["status"])
         inbound = await snmp_walk(host, port, community, WALK_OIDS["in64"]) or await snmp_walk(host, port, community, WALK_OIDS["in32"])
         outbound = await snmp_walk(host, port, community, WALK_OIDS["out64"]) or await snmp_walk(host, port, community, WALK_OIDS["out32"])
-        cpu_rows = await snmp_walk(host, port, community, CPU_OID)
+        cpu = await cpu_load(host, port, community, device.get("device_type") or "mikrotik")
     except Exception as exc:
         result = {"error": f"{type(exc).__name__}: {str(exc)[:140]}", "polled_at": now().isoformat()}
         await db.snmp_state.update_one({"device_id": device["id"]}, {"$set": {"device_id": device["id"], **result}}, upsert=True)
         return result
 
-    loads = [as_int(v) for v in cpu_rows.values() if as_int(v) >= 0]
-    cpu = int(round(sum(loads) / len(loads))) if loads else 0
     prev = await db.snmp_state.find_one({"device_id": device["id"]}, {"_id": 0}) or {}
     prev_counters = prev.get("counters") or {}
     stamp = now(); elapsed = stamp.timestamp() - float(prev.get("ts") or 0)
@@ -154,6 +186,8 @@ async def ping_device(host: str) -> dict:
 async def ensure_indexes():
     await db.device_metrics.create_index("created_at", expireAfterSeconds=RETENTION_DAYS * 86400)
     await db.device_metrics.create_index([("device_id", 1), ("created_at", -1)])
+    await db.iface_metrics.create_index("created_at", expireAfterSeconds=RETENTION_DAYS * 86400)
+    await db.iface_metrics.create_index([("device_id", 1), ("iface", 1), ("created_at", -1)])
 
 
 async def monitor_device(device: dict, settings: dict) -> list[str]:
@@ -174,6 +208,11 @@ async def monitor_device(device: dict, settings: dict) -> list[str]:
                                         "ping_ms": ping.get("rtt_ms"), "loss": ping.get("loss"), "cpu": snmp.get("cpu"),
                                         "rx_mbps": round(sum(i["rx_mbps"] or 0 for i in snmp.get("interfaces") or []), 2) if snmp.get("interfaces") else None,
                                         "tx_mbps": round(sum(i["tx_mbps"] or 0 for i in snmp.get("interfaces") or []), 2) if snmp.get("interfaces") else None})
+    if snmp.get("interfaces"):
+        keep = set(await sync_registry(device, snmp["interfaces"]))
+        rows = [{"device_id": device["id"], "iface": i["name"], "created_at": now(), "status": i["status"],
+                 "rx_mbps": i["rx_mbps"], "tx_mbps": i["tx_mbps"]} for i in snmp["interfaces"] if i["name"] in keep and i["rx_mbps"] is not None]
+        if rows: await db.iface_metrics.insert_many(rows)
     if not settings.get("enabled"): return fired
     if vendor != "mikrotik" and not ping["alive"] and settings.get("notify_unreachable"):
         if not await recently_fired(device["id"], "router-unreachable", settings["throttle_minutes"]):
@@ -197,9 +236,10 @@ async def monitor_device(device: dict, settings: dict) -> list[str]:
 async def purge_history() -> dict:
     cutoff = now() - timedelta(days=RETENTION_DAYS)
     metrics = await db.device_metrics.delete_many({"created_at": {"$lt": cutoff}})
+    ifaces = await db.iface_metrics.delete_many({"created_at": {"$lt": cutoff}})
     logs = await db.syslog_events.delete_many({"created_at": {"$lt": cutoff.isoformat()}})
     alarms = await db.alarm_log.delete_many({"created_at": {"$lt": cutoff.isoformat()}})
-    return {"metrics": metrics.deleted_count, "syslog": logs.deleted_count, "alarms": alarms.deleted_count}
+    return {"metrics": metrics.deleted_count, "interfaces": ifaces.deleted_count, "syslog": logs.deleted_count, "alarms": alarms.deleted_count}
 
 
 async def scan_monitor() -> dict:
@@ -223,7 +263,8 @@ async def visible_device(device_id: str, request: Request, user: dict) -> dict:
 
 def snmp_public(device: dict) -> dict:
     return {"enabled": bool(device.get("snmp_enabled")), "port": int(device.get("snmp_port") or 161),
-            "configured": bool(device.get("snmp_community_enc")), "version": "2c"}
+            "configured": bool(device.get("snmp_community_enc")), "version": "2c",
+            "record_mode": device.get("snmp_watch_mode") or "auto", "recorded": device.get("snmp_watch_interfaces") or []}
 
 
 @monitor_router.get("/devices/{device_id}/snmp")
@@ -251,8 +292,81 @@ async def scan_snmp(device_id: str, request: Request, user: dict = Depends(requi
     device = await visible_device(device_id, request, user)
     ping = await ping_device(device["host"])
     snmp = await poll_snmp(device)
+    if snmp.get("interfaces"): await sync_registry(device, snmp["interfaces"])
     await db.routers.update_one({"id": device_id}, {"$set": {"ping_ms": ping.get("rtt_ms"), "ping_loss": ping.get("loss"), "reachable": ping["alive"], "last_ping_at": now().isoformat()}})
     return {"ok": not snmp.get("error"), "ping": ping, "snmp": snmp}
+
+
+@monitor_router.put("/devices/{device_id}/snmp/recorded")
+async def put_recorded(device_id: str, body: RecordIn, request: Request, user: dict = Depends(require("routers", "write"))):
+    """Recorded interface registry: auto keeps appending newly scanned interfaces (no duplicates), manual is operator-owned."""
+    from server import audit
+    device = await visible_device(device_id, request, user)
+    state = await db.snmp_state.find_one({"device_id": device_id}, {"_id": 0, "interfaces": 1}) or {}
+    known = {i["name"] for i in state.get("interfaces") or []}
+    picked, seen = [], set()
+    for name in body.interfaces:  # keep operator order, drop duplicates
+        if name and name not in seen: seen.add(name); picked.append(name)
+    if body.mode == "manual":
+        if not picked: raise HTTPException(422, "Select at least one interface, or switch back to auto-scan")
+        unknown = [n for n in picked if known and n not in known]
+        if unknown: raise HTTPException(422, f"Not in the last SNMP scan: {', '.join(unknown[:5])}")
+    update = {"snmp_watch_mode": body.mode, "snmp_watch_interfaces": picked}
+    await db.routers.update_one({"id": device_id}, {"$set": update})
+    await audit(user, "device.snmp-record", device_id, f"{body.mode}: {', '.join(picked) or 'auto-scan'}")
+    return {"ok": True, "config": snmp_public({**device, **update})}
+
+
+@monitor_router.get("/devices/{device_id}/interface-history")
+async def interface_history(device_id: str, iface: str, hours: int = 24, request: Request = None, user: dict = Depends(require("routers", "read"))):
+    """Bucketed SNMP traffic history plus the ping series for the same window (max 30 days)."""
+    await visible_device(device_id, request, user)
+    hours = max(1, min(hours, RETENTION_DAYS * 24))
+    bucket = 300 if hours <= 24 else 3600 if hours <= 168 else 21600
+    cutoff = now() - timedelta(hours=hours)
+    traffic = await db.iface_metrics.find({"device_id": device_id, "iface": iface, "created_at": {"$gte": cutoff}}, {"_id": 0}).sort("created_at", 1).to_list(50000)
+    pings = await db.device_metrics.find({"device_id": device_id, "created_at": {"$gte": cutoff}}, {"_id": 0, "created_at": 1, "ping_ms": 1, "loss": 1}).sort("created_at", 1).to_list(50000)
+
+    def fold(rows: list[dict], fields: tuple[str, ...]) -> list[dict]:
+        buckets: dict[int, dict] = {}
+        for row in rows:
+            stamp = row["created_at"]
+            key = int(stamp.timestamp() // bucket) * bucket
+            slot = buckets.setdefault(key, {"n": 0, **{f: 0.0 for f in fields}})
+            slot["n"] += 1
+            for f in fields: slot[f] += float(row.get(f) or 0)
+        return [{"ts": datetime.fromtimestamp(k, tz=timezone.utc).isoformat(), **{f: round(v[f] / v["n"], 3) for f in fields}} for k, v in sorted(buckets.items())]
+
+    series = fold(traffic, ("rx_mbps", "tx_mbps"))
+    return {"iface": iface, "hours": hours, "bucket_seconds": bucket, "retention_days": RETENTION_DAYS,
+            "samples": len(traffic), "traffic": series, "ping": fold(pings, ("ping_ms", "loss")),
+            "peak": {"rx_mbps": max([s["rx_mbps"] for s in series], default=0), "tx_mbps": max([s["tx_mbps"] for s in series], default=0)},
+            "average": {"rx_mbps": round(sum(s["rx_mbps"] for s in series) / len(series), 3) if series else 0,
+                        "tx_mbps": round(sum(s["tx_mbps"] for s in series) / len(series), 3) if series else 0}}
+
+
+@monitor_router.get("/devices/{device_id}/snmp/diagnose")
+async def diagnose_snmp(device_id: str, request: Request, user: dict = Depends(require("routers", "read"))):
+    """Why SNMP is silent: ping, udp/161 answer and the IP NetPulse dials from (so it can be allowed on the device)."""
+    from engine import outbound_ip
+    device = await visible_device(device_id, request, user)
+    community = community_of(device)
+    port = int(device.get("snmp_port") or 161)
+    ping = await ping_device(device["host"])
+    answer, detail = False, "SNMP is not enabled for this device"
+    if community:
+        try:
+            system = await snmp_get(device["host"], port, community, {"descr": SYS_OIDS["descr"]})
+            answer, detail = True, system.get("descr", "")[:120]
+        except Exception as exc:
+            detail = str(exc)[:140]
+    vendor = device.get("device_type") or "mikrotik"
+    hint = ("Enable SNMP on the device and allow the NetPulse IP. MikroTik: /snmp set enabled=yes contact=netpulse ; "
+            "/snmp community set [find default=yes] addresses=<netpulse-ip>/32 name=<community> ; and accept udp/161 from that IP in /ip firewall filter."
+            if vendor == "mikrotik" else
+            "Enable SNMP v2c on the device and permit the NetPulse IP in the community ACL, then allow udp/161 from it on the firewall.")
+    return {"host": device["host"], "port": port, "from_ip": await outbound_ip(), "ping": ping,
+            "configured": bool(community), "answering": answer, "detail": detail, "hint": None if answer else hint}
 
 
 @monitor_router.get("/devices/{device_id}/metrics")
